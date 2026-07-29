@@ -1,0 +1,21 @@
+node_modules/
+dist/
+.next/
+out/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+.turbo/
+.idea/
+.vscode/
+*.tsbuildinfo
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+secrets/
+data/
+backups/

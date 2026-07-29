@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+@theme {
+  /* Design tokens live here (Tailwind 4 CSS-first, per org convention). */
+  --color-brand: #2563eb;
+}

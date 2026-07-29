@@ -1,0 +1,92 @@
+name: automated-blog-writer
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: abw
+      POSTGRES_PASSWORD: abw
+      POSTGRES_DB: abw
+    ports:
+      - "55433:5432" # 55432 is taken by aisoftphone on this box
+    volumes:
+      - abw_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U abw"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "63790:6379" # 6379 is taken by aisoftphone-redis on this box
+    volumes:
+      - abw_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: { context: ., target: api }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://abw:abw@postgres:5432/abw
+      REDIS_URL: redis://redis:6379
+      WEB_ORIGIN: http://localhost:3100
+      # containers can't open the Octane login window — hand the request to
+      # the host-side login agent through redis
+      OCTANE_LOGIN_MODE: redis
+    ports:
+      - "3101:3101"
+    volumes:
+      - ./apps/worker/secrets:/app/apps/worker/secrets
+      - ./data:/app/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., target: worker }
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://abw:abw@postgres:5432/abw
+      REDIS_URL: redis://redis:6379
+    shm_size: 1gb # headless Chromium
+    volumes:
+      - ./apps/worker/secrets:/app/apps/worker/secrets
+      - ./apps/worker/data:/app/apps/worker/data
+      - ./data:/app/data
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      PGPASSWORD: abw
+    volumes:
+      - ./ops/backup.sh:/backup.sh:ro
+      - ./backups:/backups
+      - ./apps/worker/secrets:/host-secrets:ro
+      - ./.env:/host-env:ro
+    entrypoint: ["sh", "/backup.sh"]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  web:
+    build: { context: ., target: web }
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+volumes:
+  abw_pgdata:
+  abw_redisdata:

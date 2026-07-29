@@ -1,0 +1,30 @@
+{
+  "name": "automated-blog-writer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-tenant AI blog automation platform: domain research, AI-search ranking gap analysis (live results), SEO/AEO-optimized blog generation, and publishing.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev -w @abw/web",
+    "dev:api": "npm run dev -w @abw/api",
+    "dev:worker": "npm run dev -w @abw/worker",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:studio": "prisma studio",
+    "octane:login-agent": "npx tsx apps/worker/scripts/octane-login-agent.mts"
+  },
+  "devDependencies": {
+    "prisma": "^6.5.0",
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,413 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Multi-tenancy: Company -> Locations -> Verticals
+// Every tenant-owned row carries companyId. ALL queries must scope by it.
+// ---------------------------------------------------------------------------
+
+model Company {
+  id        String   @id @default(cuid())
+  name      String
+  url       String // primary domain we research & optimize for
+  // AI-researched profile: company size, services, differentiators,
+  // what makes them unique, brand voice notes, etc.
+  profile    Json?
+  sitemapUrl String?
+  siteAudit  Json?
+  // per-tenant settings: weekly caps, killSwitch, autoApprove threshold
+  settings   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  locations      Location[]
+  gapAnalyses    GapAnalysis[]
+  blogPosts      BlogPost[]
+  publishTargets PublishTarget[]
+  sitePages      SitePage[]
+  topicNodes     TopicNode[]
+  snapshots      VisibilitySnapshot[]
+  offPageTasks   OffPageTask[]
+
+  @@index([url])
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String // e.g. "Salt Lake City HQ"
+  city      String
+  state     String?
+  country   String   @default("US")
+  // location-specific notes that shape local SEO content
+  profile    Json?
+  sitemapUrl String?
+  siteAudit  Json?
+  // per-tenant settings: weekly caps, killSwitch, autoApprove threshold
+  settings   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verticals Vertical[]
+  gapAnalyses GapAnalysis[]
+  blogPosts   BlogPost[]
+
+  @@index([companyId])
+}
+
+model Vertical {
+  id         String   @id @default(cuid())
+  locationId String
+  name       String // e.g. "Managed IT for Dental Offices"
+  slug       String
+  // AI-researched vertical profile: audience, pain points, keywords,
+  // how this vertical ties to the company's uniques at this location
+  profile    Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  location    Location      @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  gapAnalyses GapAnalysis[]
+  blogPosts   BlogPost[]
+
+  @@unique([locationId, slug])
+  @@index([locationId])
+}
+
+enum AnalysisStatus {
+  queued
+  running
+  complete
+  failed
+}
+
+model GapAnalysis {
+  id         String  @id @default(cuid())
+  companyId  String
+  locationId String?
+  verticalId String?
+
+  status AnalysisStatus @default(queued)
+
+  // Who is ranking (AI-search + SERP), fetched LIVE — never from cache.
+  competitors Json?
+  // Identified gaps: topics/queries where the tenant is absent or weak, and why.
+  gaps        Json?
+  // Timestamp of the live fetch that produced this analysis (proof of freshness).
+  liveFetchedAt DateTime?
+  error         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location Location? @relation(fields: [locationId], references: [id])
+  vertical Vertical? @relation(fields: [verticalId], references: [id])
+  blogPosts BlogPost[]
+
+  @@index([companyId])
+}
+
+enum PostStatus {
+  draft
+  review
+  approved
+  published
+  failed
+  rejected
+}
+
+model BlogPost {
+  id            String  @id @default(cuid())
+  companyId     String
+  locationId    String?
+  verticalId    String?
+  gapAnalysisId String?
+
+  title     String
+  slug      String
+  status    PostStatus @default(draft)
+  contentMd String     @default("") // markdown body
+  bodyHtml  String     @default("")
+  qa        Json?
+  topicNodeId String?
+  scheduledFor DateTime?
+  batchRunId   String?
+  publishError String?
+  // SEO/AEO payload: meta title/description, JSON-LD schema.org, FAQ blocks,
+  // target queries, internal link suggestions.
+  seo       Json?
+  publishedUrl String?
+  publishedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location    Location?    @relation(fields: [locationId], references: [id])
+  vertical    Vertical?    @relation(fields: [verticalId], references: [id])
+  gapAnalysis GapAnalysis? @relation(fields: [gapAnalysisId], references: [id])
+
+  @@unique([companyId, slug])
+  @@index([companyId, status])
+  @@index([batchRunId])
+}
+
+enum PublishTargetKind {
+  wordpress
+  webhook
+  custom
+}
+
+model PublishTarget {
+  id        String            @id @default(cuid())
+  companyId String
+  kind      PublishTargetKind
+  name      String
+  // connection config (WP base URL + app password ref, webhook URL, etc.)
+  config    Json
+  isDefault Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1+: coverage map, topic graph, measurement, off-page
+// ---------------------------------------------------------------------------
+
+// One row per crawled URL. Gap analysis diffs the TopicGraph against
+// questionsAnswered across these rows.
+model SitePage {
+  id        String   @id @default(cuid())
+  companyId String
+  url       String
+  path      String
+  // home | service | industry | location | blog | landing | legal | other
+  contentType       String?
+  title             String?
+  primaryTopic      String?
+  questionsAnswered Json?
+  entities          Json?
+  hasSchema         Boolean   @default(false)
+  structureScore    Int?
+  wordCount         Int?
+  lastCrawledAt     DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, url])
+  @@index([companyId, contentType])
+}
+
+enum TopicStatus {
+  unanswered
+  answered_weak
+  answered_strong
+  competitor_owned
+  stale
+}
+
+// The per-tenant Topic Graph: every question the tenant's buyers could ask
+// an AI, per (location x vertical) where applicable. The headline metric is
+// answer coverage %: answered_strong / total.
+model TopicNode {
+  id         String  @id @default(cuid())
+  companyId  String
+  locationId String?
+  verticalId String?
+
+  question    String
+  category    String // e.g. managed-it, cybersecurity, compliance-hipaa, m365
+  funnelStage String // awareness | consideration | decision | compliance
+  // taxonomy | paa | fanout | news | gsc
+  source      String  @default("taxonomy")
+
+  status     TopicStatus @default(unanswered)
+  score      Float?
+  scoreParts Json?
+  // live evidence from the latest gap run: who is cited, demand, liveFetchedAt
+  evidence   Json?
+
+  answeredByPageId String?
+  blogPostId       String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, locationId, verticalId, question])
+  @@index([companyId, status])
+  @@index([companyId, score])
+}
+
+model VisibilitySnapshot {
+  id         String   @id @default(cuid())
+  companyId  String
+  locationId String?
+  verticalId String?
+  capturedAt DateTime @default(now())
+  // coverage %, prompts checked, tenant presence count, competitor share
+  summary    Json
+  raw        Json?
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, capturedAt])
+}
+
+model OffPageTask {
+  id        String @id @default(cuid())
+  companyId String
+  // e.g. reddit.com, cloudtango.net, clutch.co
+  source    String
+  action    String
+  evidence  Json?
+  priority  Int    @default(0)
+  // open | in_progress | done | dismissed
+  status    String @default("open")
+  draft     Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, status])
+}
+
+// Provider spend + freshness ledger. Enforces the live-results rule.
+model DataFetchLog {
+  id            String   @id @default(cuid())
+  companyId     String?
+  // the blog post this AI/API call was spent on (per-post cost accounting)
+  blogPostId    String?
+  provider      String // dataforseo | openrouter
+  endpoint      String
+  cost          Float?
+  liveFetchedAt DateTime @default(now())
+  meta          Json?
+
+  @@index([provider, liveFetchedAt])
+  @@index([blogPostId])
+}
+
+// Uploaded grounding documents (testimonial books, case studies, price sheets).
+// Extracted content feeds the content engine as real-world examples.
+model CompanyDocument {
+  id        String   @id @default(cuid())
+  companyId String
+  filename  String
+  kind      String   @default("testimonials") // testimonials | case_studies | other
+  filePath  String
+  // uploaded | extracting | ready | failed
+  status    String   @default("uploaded")
+  // structured extraction: testimonials[], caseExamples[], stats[]
+  extracted Json?
+  error     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+// One row per testimonial/case example, extracted once from uploaded docs
+// and retrieved deterministically (no AI) at generation time by industry +
+// keyword overlap.
+model Testimonial {
+  id         String  @id @default(cuid())
+  companyId  String
+  documentId String?
+  clientName String? // as written; may be anonymized
+  industry   String? // normalized lowercase industry/vertical
+  location   String?
+  quote      String
+  // what happened: problem -> outcome, in plain text
+  resultClaim String?
+  // concrete numbers mentioned (e.g. "response under 5 min", "$12k saved")
+  metrics    Json?
+  services   String[] @default([])
+  keywords   String[] @default([])
+  createdAt  DateTime @default(now())
+
+  @@index([companyId, industry])
+}
+
+// Owner-maintained pricing ranges — the ONLY source the writer may use for
+// company pricing. Always expressed as ranges, never exact invented figures.
+model PricingRange {
+  id        String  @id @default(cuid())
+  companyId String
+  // e.g. "Managed IT Services", "Co-Managed IT", "Backup & Disaster Recovery"
+  service   String
+  // e.g. "per user/month", "per device/month", "flat monthly", "one-time"
+  unit      String  @default("per user/month")
+  low       Float
+  high      Float
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+}
+
+// Live progress of an owner-triggered write-and-schedule batch, polled by
+// the dashboard (overall bar + per-article step).
+model BatchRun {
+  id        String   @id @default(cuid())
+  companyId String
+  // running | scheduling | done | failed
+  state     String   @default("running")
+  total     Int
+  written   Int      @default(0)
+  scheduled Int      @default(0)
+  skippedQa  Int     @default(0)
+  skippedDup Int     @default(0)
+  failed     Int     @default(0)
+  currentTitle String?
+  currentStep  String?
+  // ids of BlogPosts produced by this run (partial list survives a stop)
+  postIds    Json?
+  startedAt  DateTime @default(now())
+  finishedAt DateTime?
+
+  @@index([companyId, startedAt])
+}
+
+// In-app notification center: batch finished, publish failed, weekly run done.
+model Notification {
+  id        String    @id @default(cuid())
+  companyId String?
+  // batch_done | publish_failed | weekly_done | review_needed | info
+  type      String
+  title     String
+  body      String?
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([readAt, createdAt])
+}
+
+// Multi-user auth. First registered user becomes admin (setup mode);
+// until a user exists the API runs open for local setup.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("admin")
+  createdAt    DateTime @default(now())
+}
