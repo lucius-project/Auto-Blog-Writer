@@ -10,6 +10,7 @@ const app = Fastify({ logger: true });
 await app.register(cors, {
   origin: process.env.WEB_ORIGIN ?? "http://localhost:3100",
   credentials: true,
+  methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
 });
 
 // Auth enforcement: open until the first user is created (setup mode).

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
 import { createWriteStream } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import { prisma } from "../lib/prisma.js";
@@ -35,6 +35,16 @@ export async function documentRoutes(app: FastifyInstance) {
     const docs = await prisma.companyDocument.findMany({ where: { companyId }, orderBy: { createdAt: "desc" } });
     const testimonialCount = await prisma.testimonial.count({ where: { companyId } });
     return { documents: docs.map((d) => ({ id: d.id, filename: d.filename, kind: d.kind, status: d.status, error: d.error, createdAt: d.createdAt })), testimonialCount };
+  });
+
+  app.delete("/companies/:companyId/documents/:documentId", async (req, reply) => {
+    const { companyId, documentId } = req.params as { companyId: string; documentId: string };
+    const doc = await prisma.companyDocument.findFirst({ where: { id: documentId, companyId } });
+    if (!doc) return reply.code(404).send({ error: "document not found" });
+    await prisma.testimonial.deleteMany({ where: { documentId: doc.id } });
+    await prisma.companyDocument.delete({ where: { id: doc.id } });
+    await unlink(doc.filePath).catch(() => null);
+    return { ok: true };
   });
 
   app.get("/companies/:companyId/testimonials", async (req) => {

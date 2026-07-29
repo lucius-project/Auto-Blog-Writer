@@ -126,6 +126,7 @@ export default function Settings({ params }: { params: Promise<{ companyId: stri
 function DocumentUpload({ companyId }: { companyId: string }) {
   const [docs, setDocs] = useState<{ documents: any[]; testimonialCount: number }>({ documents: [], testimonialCount: 0 });
   const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
   const load = useCallback(() =>
     fetch(`${API}/api/companies/${companyId}/documents`).then((r) => r.json()).then(setDocs), [companyId]);
   useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
@@ -137,6 +138,16 @@ function DocumentUpload({ companyId }: { companyId: string }) {
     await fetch(`${API}/api/companies/${companyId}/documents`, { method: "POST", body: fd });
     setUploading(false);
     load();
+  };
+
+  const remove = async (d: any) => {
+    setRemoving(d.id);
+    try {
+      await fetch(`${API}/api/companies/${companyId}/documents/${d.id}`, { method: "DELETE" });
+    } finally {
+      setRemoving(null);
+      load();
+    }
   };
 
   return (
@@ -155,6 +166,10 @@ function DocumentUpload({ companyId }: { companyId: string }) {
               {d.status === "extracting" ? "extracting…" : d.status}
             </span>
             {d.error && <span className="text-xs text-red-600">{d.error}</span>}
+            <button onClick={() => remove(d)} disabled={removing === d.id}
+              className="text-xs text-red-600 hover:underline disabled:opacity-50">
+              {removing === d.id ? "removing…" : "remove"}
+            </button>
           </div>
         ))}
       </div>
