@@ -6,7 +6,7 @@ Context for all Claude Code agents working in this repository.
 
 ## What Is This Project?
 
-**Automated Blog Writer** is a multi-tenant SaaS platform (911 IT org) that:
+**Automated Blog Writer** is a multi-tenant SaaS platform (DataStream Networks org) that:
 
 1. **Researches** a company from its URL using AI: company size, services, what makes it unique, differentiators, brand voice — plus each vertical and how company + location + vertical tie together.
 2. **Analyzes ranking gaps**: pulls AI-search analytics and SERP data to see which companies are ranking for the tenant's space and identifies why the tenant is not ranking or could rank better.
