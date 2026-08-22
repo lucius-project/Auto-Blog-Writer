@@ -49,7 +49,7 @@ export async function publishBlog(job: Job) {
   try {
     const imgDir = path.resolve("data/images");
     mkdirSync(imgDir, { recursive: true });
-    const imgPath = path.join(imgDir, `${post.id}.png`);
+    const imgPath = path.join(imgDir, `${post.id}.jpg`);
     if (existsSync(imgPath) && seo.cartoon?.width) {
       previewImage = { filePath: imgPath, alt: seo.cartoon.alt ?? `Cartoon: ${post.title}`, width: seo.cartoon.width, height: seo.cartoon.height };
     } else {

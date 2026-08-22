@@ -44,7 +44,7 @@ export async function uploadImage(page: Page, filePath: string, name: string): P
     const arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     const fd = new FormData();
-    fd.append("file", new File([arr], ${JSON.stringify("NAME")}, { type: "image/png" }));
+    fd.append("file", new File([arr], ${JSON.stringify("NAME")}, { type: "image/jpeg" }));
     const token = (document.querySelector('meta[name="csrf-token"]') || {}).content;
     const res = await fetch("/media/customupload/0", { method: "POST", headers: { "X-CSRF-TOKEN": token, "X-Requested-With": "XMLHttpRequest" }, body: fd });
     const txt = await res.text();
@@ -170,7 +170,7 @@ async function apiSteps(page: Page, pageId: string, a: PublishArticle, track: (s
   let imgFilename: string | null = null;
   if (a.previewImage) {
     track("upload-image");
-    imgFilename = await uploadImage(page, a.previewImage.filePath, `blog-${a.slug.slice(0, 40)}.png`);
+    imgFilename = await uploadImage(page, a.previewImage.filePath, `blog-${a.slug.slice(0, 40)}.jpg`);
   }
   track("native-content");
   await saveNativeContent(page, pageId, a, imgFilename);

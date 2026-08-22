@@ -16,12 +16,15 @@ async function wpUploadMedia(baseUrl: string, auth: string, a: PublishArticle): 
       method: "POST",
       headers: {
         Authorization: auth,
-        "Content-Type": "image/png",
-        "Content-Disposition": `attachment; filename="blog-${a.slug.slice(0, 40)}.png"`,
+        "Content-Type": "image/jpeg",
+        "Content-Disposition": `attachment; filename="blog-${a.slug.slice(0, 40)}.jpg"`,
       },
       body: new Uint8Array(buf),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[wordpress publisher] media upload failed ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      return null;
+    }
     const data = (await res.json()) as any;
     // set alt text
     await fetch(`${baseUrl.replace(/\/$/, "")}/wp-json/wp/v2/media/${data.id}`, {
@@ -29,7 +32,10 @@ async function wpUploadMedia(baseUrl: string, auth: string, a: PublishArticle): 
       body: JSON.stringify({ alt_text: a.previewImage.alt }),
     }).catch(() => null);
     return data.id ?? null;
-  } catch { return null; }
+  } catch (e: any) {
+    console.warn(`[wordpress publisher] media upload threw: ${e?.message}`);
+    return null;
+  }
 }
 
 export function wordpressPublisher(config: {

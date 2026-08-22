@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { prisma } from "./prisma.js";
 import { chat } from "./openrouter.js";
 
@@ -54,10 +55,15 @@ export async function generateCartoon(opts: {
   const data = (await res.json()) as any;
   const url: string = data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ?? "";
   if (!url.startsWith("data:image/")) throw new Error("imagegen: no image in response");
-  const buffer = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
-  // PNG IHDR dims
-  let width = 1344, height = 768;
-  try { width = buffer.readUInt32BE(16); height = buffer.readUInt32BE(20); } catch { /* defaults */ }
+  const rawBuffer = Buffer.from(url.slice(url.indexOf(",") + 1), "base64");
+  // re-encode as JPEG: the raw PNG from the model can run 1MB+, which trips
+  // hosts' upload size caps (WordPress media POST silently fails on some
+  // configs); a resized JPEG carries the same visual at a fraction of the size.
+  const resized = sharp(rawBuffer).resize({ width: 1200, withoutEnlargement: true });
+  const buffer = await resized.jpeg({ quality: 82 }).toBuffer();
+  const meta = await sharp(buffer).metadata();
+  const width = meta.width ?? 1200;
+  const height = meta.height ?? 675;
 
   await prisma.dataFetchLog.create({
     data: {
