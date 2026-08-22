@@ -3,7 +3,7 @@ import { AnalyzeGapsPayload } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import { serpProbe } from "../lib/dataforseo.js";
-import { TEMPLATES, FRAMEWORKS, fillTemplate } from "../lib/taxonomy.js";
+import { TEMPLATES, frameworksFor, fillTemplate } from "../lib/taxonomy.js";
 
 const INTENT_W: Record<string, number> = { awareness: 0.6, consideration: 0.85, decision: 1.0, compliance: 0.95 };
 
@@ -35,7 +35,7 @@ export async function analyzeGaps(job: Job) {
     if (payload.locationId && loc.id !== payload.locationId) continue;
     for (const v of loc.verticals) {
       if (payload.verticalId && v.id !== payload.verticalId) continue;
-      const frameworks = FRAMEWORKS[v.slug] ?? FRAMEWORKS[v.slug.split("-")[0] ?? ""] ?? FRAMEWORKS.default!;
+      const frameworks = frameworksFor(loc.country, v.slug);
       pairs.push({
         locationId: loc.id, verticalId: v.id,
         vars: { vertical: v.name.toLowerCase(), location: `${loc.city}${loc.state ? ", " + loc.state : ""}`, framework: frameworks[0] ?? "SOC 2" },

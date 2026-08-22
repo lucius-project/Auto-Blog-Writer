@@ -5,6 +5,14 @@
  * and locations, then augments with vertical buyerQuestions, PAA and fan-out.
  */
 
+const COUNTRY_NAMES: Record<string, string> = { US: "United States", CA: "Canada" };
+
+/** Full country name for prompts/schema.org — falls back to the raw code for anything outside US/CA. */
+export function countryName(country: string | null | undefined): string {
+  if (!country) return COUNTRY_NAMES.US!;
+  return COUNTRY_NAMES[country] ?? country;
+}
+
 export const MSP_SERVICES = [
   "managed IT services", "co-managed IT", "IT help desk", "cybersecurity",
   "managed detection and response", "backup and disaster recovery",
@@ -12,7 +20,7 @@ export const MSP_SERVICES = [
   "vCIO services", "compliance services", "IT support",
 ];
 
-export const FRAMEWORKS: Record<string, string[]> = {
+export const FRAMEWORKS_US: Record<string, string[]> = {
   healthcare: ["HIPAA", "HITECH"],
   dental: ["HIPAA"],
   legal: ["ABA cybersecurity guidelines", "state bar data rules"],
@@ -24,6 +32,33 @@ export const FRAMEWORKS: Record<string, string[]> = {
   government: ["CJIS", "NIST CSF"],
   default: ["SOC 2", "NIST CSF", "PCI-DSS"],
 };
+
+// Canadian equivalents — US frameworks like HIPAA, OSHA, CMMC and ITAR have
+// no jurisdiction in Canada, so a Canadian tenant needs its own table rather
+// than a translated copy of the US one.
+export const FRAMEWORKS_CA: Record<string, string[]> = {
+  healthcare: ["PIPEDA", "PHIPA (Ontario) and other provincial health privacy laws"],
+  dental: ["PIPEDA", "provincial health privacy laws"],
+  legal: ["Law Society cybersecurity guidelines", "PIPEDA"],
+  finance: ["PIPEDA", "OSFI cybersecurity guidelines", "FINTRAC requirements"],
+  cpa: ["PIPEDA", "CPA Canada guidance"],
+  manufacturing: ["CCCS baseline cyber security controls", "Controlled Goods Program", "PIPEDA"],
+  construction: ["provincial Occupational Health and Safety (OHS) regulations", "CCCS baseline controls"],
+  nonprofit: ["PCI-DSS", "PIPEDA"],
+  government: ["ITSG-33 (Communications Security Establishment)", "Protected B security requirements", "PIPEDA"],
+  default: ["PIPEDA", "CCCS baseline cyber security controls", "PCI-DSS"],
+};
+
+const FRAMEWORKS_BY_COUNTRY: Record<string, Record<string, string[]>> = {
+  US: FRAMEWORKS_US,
+  CA: FRAMEWORKS_CA,
+};
+
+/** Compliance frameworks for a vertical, localized by the tenant location's country (defaults to US). */
+export function frameworksFor(country: string | null | undefined, verticalSlug: string): string[] {
+  const table = FRAMEWORKS_BY_COUNTRY[country ?? "US"] ?? FRAMEWORKS_US;
+  return table[verticalSlug] ?? table[verticalSlug.split("-")[0] ?? ""] ?? table.default!;
+}
 
 export interface TopicTemplate {
   q: string;

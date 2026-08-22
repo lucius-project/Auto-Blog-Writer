@@ -6,6 +6,7 @@ import { getQueue } from "../lib/queues.js";
 import { QUEUES } from "@abw/shared";
 import { chatJson } from "../lib/openrouter.js";
 import { fetchText, extractPage } from "../lib/site.js";
+import { countryName } from "../lib/taxonomy.js";
 
 /**
  * Stage 2 — Company & vertical research (grounded in the live site).
@@ -77,9 +78,9 @@ ${grounding.join("\n\n---\n\n")}` },
         (p.primaryTopic ?? "").toLowerCase().includes(v.name.split(" ")[0]?.toLowerCase() ?? ""));
       const vProfile = await chatJson<Record<string, unknown>>([
         { role: "system", content: "You are an industry analyst. Build a vertical profile for AI-search content. General industry knowledge is allowed and should be marked as such; company-specific claims must come only from the provided pages. Reply with JSON only." },
-        { role: "user", content: `JSON: {"industryPainPoints":["..."],"toolsAndVendorsUsed":["software/tools this vertical actually uses"],"complianceFrameworks":["..."],"buyerQuestions":["the 10-15 most important questions this vertical asks about IT, phrased as they'd ask an AI"],"terminology":["..."],"howCompanyServesThisVertical":"only from provided pages; null if nothing on site","localAngle":"how ${loc.city}, ${loc.state ?? ""} specifics affect this vertical (regulations, market)"}
+        { role: "user", content: `JSON: {"industryPainPoints":["..."],"toolsAndVendorsUsed":["software/tools this vertical actually uses"],"complianceFrameworks":["only frameworks that actually apply in ${countryName(loc.country)} — do not use frameworks from other countries"],"buyerQuestions":["the 10-15 most important questions this vertical asks about IT, phrased as they'd ask an AI"],"terminology":["..."],"howCompanyServesThisVertical":"only from provided pages; null if nothing on site","localAngle":"how ${loc.city}, ${loc.state ?? ""}, ${countryName(loc.country)} specifics affect this vertical (regulations, market) — use ${countryName(loc.country)} regulatory bodies and laws, never another country's"}
 
-VERTICAL: ${v.name} | LOCATION: ${loc.city}, ${loc.state ?? ""} | COMPANY: ${company.name}
+VERTICAL: ${v.name} | LOCATION: ${loc.city}, ${loc.state ?? ""}, ${countryName(loc.country)} | COMPANY: ${company.name}
 COMPANY PROFILE: ${JSON.stringify(profile).slice(0, 1500)}
 COMPANY INDUSTRY PAGES: ${relevant.map((p) => `${p.title}: ${JSON.stringify(p.questionsAnswered)}`).join("\n") || "none found on site"}` },
       ], { companyId: company.id, tag: "research-vertical", maxTokens: 2000, temperature: 0.3 });

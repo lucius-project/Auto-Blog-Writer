@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import { runQaGates } from "../lib/qa.js";
 import { relevantTestimonials } from "../lib/retrieval.js";
+import { countryName } from "../lib/taxonomy.js";
 
 interface DraftJson {
   title: string;
@@ -63,7 +64,7 @@ ${testimonials.map((t, i) => `[${i + 1}] ${t.clientName ?? "Client"}${t.industry
 COMPANY: ${company.name} (${company.url})
 PROFILE: ${JSON.stringify(profile).slice(0, 2500)}
 ${vertical ? `VERTICAL: ${vertical.name}\nVERTICAL PROFILE: ${JSON.stringify(vProfile).slice(0, 2000)}` : ""}
-${location ? `LOCATION: ${location.city}, ${location.state ?? ""}` : ""}
+${location ? `LOCATION: ${location.city}, ${location.state ?? ""}, ${countryName(location.country)} — use ${countryName(location.country)} regulations, terminology and currency, never another country's` : ""}
 ${pricingBlock}
 ${testimonialBlock}
 LIVE EVIDENCE (from gap analysis): ${JSON.stringify({ peopleAlsoAsk: evidence.peopleAlsoAsk, competitorsCited: evidence.competitorsCited, hasAiOverview: evidence.hasAiOverview }).slice(0, 1200)}
@@ -190,7 +191,7 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
   return { status: "ok", blogPostId: post.id, qaPass: qa.pass };
 }
 
-function buildJsonLd(d: DraftJson, company: { name: string; url: string }, location: { city: string; state: string | null } | null, profile: any) {
+function buildJsonLd(d: DraftJson, company: { name: string; url: string }, location: { city: string; state: string | null; country: string } | null, profile: any) {
   const origin = new URL(company.url).origin;
   const graph: any[] = [
     {
@@ -216,7 +217,7 @@ function buildJsonLd(d: DraftJson, company: { name: string; url: string }, locat
       "@type": "LocalBusiness",
       name: company.name,
       url: origin,
-      address: { "@type": "PostalAddress", addressLocality: location.city, addressRegion: location.state ?? undefined },
+      address: { "@type": "PostalAddress", addressLocality: location.city, addressRegion: location.state ?? undefined, addressCountry: location.country },
       areaServed: [location.city],
     });
   }

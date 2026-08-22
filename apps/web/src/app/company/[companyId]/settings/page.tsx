@@ -245,8 +245,44 @@ function PricingTable({ companyId }: { companyId: string }) {
 
 
 
+const COUNTRIES = [
+  { code: "US", name: "United States" },
+  { code: "CA", name: "Canada" },
+];
+
+// Regulations/compliance frameworks are looked up per-country in the worker
+// (apps/worker/src/lib/taxonomy.ts) — only US and CA are supported there today.
+const STATES_BY_COUNTRY: Record<string, { code: string; name: string }[]> = {
+  US: [
+    { code: "AL", name: "Alabama" }, { code: "AK", name: "Alaska" }, { code: "AZ", name: "Arizona" },
+    { code: "AR", name: "Arkansas" }, { code: "CA", name: "California" }, { code: "CO", name: "Colorado" },
+    { code: "CT", name: "Connecticut" }, { code: "DE", name: "Delaware" }, { code: "DC", name: "District of Columbia" },
+    { code: "FL", name: "Florida" }, { code: "GA", name: "Georgia" }, { code: "HI", name: "Hawaii" },
+    { code: "ID", name: "Idaho" }, { code: "IL", name: "Illinois" }, { code: "IN", name: "Indiana" },
+    { code: "IA", name: "Iowa" }, { code: "KS", name: "Kansas" }, { code: "KY", name: "Kentucky" },
+    { code: "LA", name: "Louisiana" }, { code: "ME", name: "Maine" }, { code: "MD", name: "Maryland" },
+    { code: "MA", name: "Massachusetts" }, { code: "MI", name: "Michigan" }, { code: "MN", name: "Minnesota" },
+    { code: "MS", name: "Mississippi" }, { code: "MO", name: "Missouri" }, { code: "MT", name: "Montana" },
+    { code: "NE", name: "Nebraska" }, { code: "NV", name: "Nevada" }, { code: "NH", name: "New Hampshire" },
+    { code: "NJ", name: "New Jersey" }, { code: "NM", name: "New Mexico" }, { code: "NY", name: "New York" },
+    { code: "NC", name: "North Carolina" }, { code: "ND", name: "North Dakota" }, { code: "OH", name: "Ohio" },
+    { code: "OK", name: "Oklahoma" }, { code: "OR", name: "Oregon" }, { code: "PA", name: "Pennsylvania" },
+    { code: "RI", name: "Rhode Island" }, { code: "SC", name: "South Carolina" }, { code: "SD", name: "South Dakota" },
+    { code: "TN", name: "Tennessee" }, { code: "TX", name: "Texas" }, { code: "UT", name: "Utah" },
+    { code: "VT", name: "Vermont" }, { code: "VA", name: "Virginia" }, { code: "WA", name: "Washington" },
+    { code: "WV", name: "West Virginia" }, { code: "WI", name: "Wisconsin" }, { code: "WY", name: "Wyoming" },
+  ],
+  CA: [
+    { code: "AB", name: "Alberta" }, { code: "BC", name: "British Columbia" }, { code: "MB", name: "Manitoba" },
+    { code: "NB", name: "New Brunswick" }, { code: "NL", name: "Newfoundland and Labrador" },
+    { code: "NS", name: "Nova Scotia" }, { code: "NT", name: "Northwest Territories" }, { code: "NU", name: "Nunavut" },
+    { code: "ON", name: "Ontario" }, { code: "PE", name: "Prince Edward Island" }, { code: "QC", name: "Quebec" },
+    { code: "SK", name: "Saskatchewan" }, { code: "YT", name: "Yukon" },
+  ],
+};
+
 function LocationsManager({ company, reload, onNotice }: { company: any; reload: () => void; onNotice: (m: string) => void }) {
-  const [loc, setLoc] = useState({ name: "", city: "", state: "" });
+  const [loc, setLoc] = useState({ name: "", city: "", state: "", country: "CA" });
   const [vertDraft, setVertDraft] = useState<Record<string, string>>({});
   const [researching, setResearching] = useState(false);
   const unprofiled = (company?.locations ?? []).flatMap((l: any) => l.verticals).filter((v: any) => !v.profile).length;
@@ -268,9 +304,9 @@ function LocationsManager({ company, reload, onNotice }: { company: any; reload:
     if (!loc.city) return;
     await fetch(`${API}/api/companies/${company.id}/locations`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: loc.name || `${loc.city} office`, city: loc.city, state: loc.state || undefined }),
+      body: JSON.stringify({ name: loc.name || `${loc.city} office`, city: loc.city, state: loc.state || undefined, country: loc.country }),
     });
-    setLoc({ name: "", city: "", state: "" });
+    setLoc({ name: "", city: "", state: "", country: "CA" });
     reload();
     onNotice("Location added. Add its verticals, then click 'Research new additions' so profiles and topics get built for it.");
   };
@@ -306,7 +342,7 @@ function LocationsManager({ company, reload, onNotice }: { company: any; reload:
       {company.locations?.map((l: any) => (
         <div key={l.id} className="mt-3 rounded-lg bg-gray-50 p-3 text-sm">
           <div className="flex items-center justify-between">
-            <div><b>{l.name}</b> — {l.city}{l.state ? `, ${l.state}` : ""}</div>
+            <div><b>{l.name}</b> — {l.city}{l.state ? `, ${l.state}` : ""} · {l.country ?? "US"}</div>
             <button onClick={() => removeLocation(l.id)} className="text-xs text-red-500">remove</button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -325,9 +361,23 @@ function LocationsManager({ company, reload, onNotice }: { company: any; reload:
         </div>
       ))}
       <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
+        <label className="text-xs">Country<br />
+          <select value={loc.country}
+            onChange={(e) => setLoc({ ...loc, country: e.target.value, state: "" })}
+            className="mt-1 rounded border px-2 py-1">
+            {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </select>
+        </label>
         <label className="text-xs">City<br /><input value={loc.city} onChange={(e) => setLoc({ ...loc, city: e.target.value })} className="mt-1 rounded border px-2 py-1" /></label>
-        <label className="text-xs">State<br /><input value={loc.state} onChange={(e) => setLoc({ ...loc, state: e.target.value })} placeholder="UT" className="mt-1 w-16 rounded border px-2 py-1" /></label>
-        <label className="text-xs">Label (optional)<br /><input value={loc.name} onChange={(e) => setLoc({ ...loc, name: e.target.value })} placeholder="Salt Lake City HQ" className="mt-1 rounded border px-2 py-1" /></label>
+        <label className="text-xs">{loc.country === "CA" ? "Province" : "State"}<br />
+          <select value={loc.state}
+            onChange={(e) => setLoc({ ...loc, state: e.target.value })}
+            className="mt-1 rounded border px-2 py-1">
+            <option value="">—</option>
+            {(STATES_BY_COUNTRY[loc.country] ?? []).map((s) => <option key={s.code} value={s.code}>{s.name} ({s.code})</option>)}
+          </select>
+        </label>
+        <label className="text-xs">Label (optional)<br /><input value={loc.name} onChange={(e) => setLoc({ ...loc, name: e.target.value })} placeholder="Duncan BC HQ" className="mt-1 rounded border px-2 py-1" /></label>
         <button onClick={addLocation} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white">Add location</button>
       </div>
     </div>
