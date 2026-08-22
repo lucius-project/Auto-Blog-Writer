@@ -113,4 +113,6 @@ npm run typecheck           # all workspaces
 - **Phase 5** Weekly forever-loop (`weekly-run` queue, BullMQ job scheduler, Mon 06:00 America/Denver registered for 911 IT), caps + kill switch via `Company.settings`, freshness staling at 90 days.
 - **Phase 6** Event feeds (CISA KEV + endoflife.date -> news topics), auto-approve path (off by default), `DataFetchLog` spend ledger.
 
-**Pending human steps:** DataForSEO account verification (probes return 40104 until then) · one-time Octane login `DISPLAY=:0 npx tsx apps/worker/scripts/octane-login.ts` (Cloudflare Turnstile; saves `secrets/octane-state.json`).
+**Pending human steps:** one-time Octane login `DISPLAY=:0 npx tsx apps/worker/scripts/octane-login.ts` (Cloudflare Turnstile; saves `secrets/octane-state.json`).
+
+DataForSEO account verification is complete as of 2026-08-22 — live SERP/AI-Overview probes are working.
