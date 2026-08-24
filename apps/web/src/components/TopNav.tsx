@@ -75,12 +75,12 @@ export default function TopNav() {
         </div>
 
         {/* section tabs */}
-        <nav className="flex flex-1 items-center gap-0.5 overflow-x-auto">
+        <nav className="flex flex-1 flex-wrap items-center gap-x-0.5 gap-y-1">
           {tabs.map((t) => {
             const active = path === t.href;
             return (
               <a key={t.href} href={t.href}
-                className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-sm font-medium ${active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`}>
+                className={`whitespace-nowrap rounded-lg px-2 py-1 text-sm font-medium ${active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`}>
                 {t.label}
               </a>
             );
