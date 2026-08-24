@@ -11,6 +11,7 @@ import { extractDocument } from "./processors/extractDocument.js";
 import { octaneKeepalive } from "./processors/octaneKeepalive.js";
 import { writeSchedule } from "./processors/writeSchedule.js";
 import { offpageDraft } from "./processors/offpageDraft.js";
+import { syncAnalytics } from "./processors/syncAnalytics.js";
 import { Queue } from "bullmq";
 
 const connection = new IORedis(
@@ -29,6 +30,7 @@ const workers = [
   new Worker("octane-keepalive", octaneKeepalive, { connection }),
   new Worker(QUEUES.writeSchedule, writeSchedule, { connection, lockDuration: 10 * 60 * 1000 }),
   new Worker(QUEUES.offpageDraft, offpageDraft, { connection }),
+  new Worker(QUEUES.syncAnalytics, syncAnalytics, { connection }),
 ];
 
 for (const w of workers) {

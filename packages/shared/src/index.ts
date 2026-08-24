@@ -19,6 +19,7 @@ export const QUEUES = {
   extractDocument: "extract-document",
   writeSchedule: "write-schedule",
   offpageDraft: "offpage-draft",
+  syncAnalytics: "sync-analytics",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -108,6 +109,12 @@ export const WriteSchedulePayload = z.object({
 });
 export type WriteSchedulePayload = z.infer<typeof WriteSchedulePayload>;
 
+/** Pull a rolling GA4 report (site-wide trend + per-post leaderboard) for a tenant. */
+export const SyncAnalyticsPayload = z.object({
+  companyId: z.string().min(1),
+});
+export type SyncAnalyticsPayload = z.infer<typeof SyncAnalyticsPayload>;
+
 export const JOB_PAYLOADS = {
   [QUEUES.ingestSite]: IngestSitePayload,
   [QUEUES.researchCompany]: ResearchCompanyPayload,
@@ -118,6 +125,7 @@ export const JOB_PAYLOADS = {
   [QUEUES.extractDocument]: ExtractDocumentPayload,
   [QUEUES.writeSchedule]: WriteSchedulePayload,
   [QUEUES.offpageDraft]: OffpageDraftPayload,
+  [QUEUES.syncAnalytics]: SyncAnalyticsPayload,
 } as const;
 
 // ---------------------------------------------------------------------------

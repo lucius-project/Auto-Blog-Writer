@@ -42,6 +42,7 @@ export default function TopNav() {
     { href: `/review/${companyId}`, label: reviewCount ? `Review (${reviewCount})` : "Review" },
     { href: `/company/${companyId}/topics`, label: "Topics" },
     { href: `/company/${companyId}/trends`, label: "Trends" },
+    { href: `/company/${companyId}/analytics`, label: "Analytics" },
     { href: `/company/${companyId}/offpage`, label: "Off-page" },
     { href: `/company/${companyId}/batches`, label: "Batches" },
     { href: `/company/${companyId}/settings`, label: "Settings" },

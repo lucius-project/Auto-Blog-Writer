@@ -60,6 +60,8 @@ await app.register(
     const { notificationRoutes, trendsRoutes } = await import("./routes/posts.js");
     await api.register(notificationRoutes);
     await api.register(trendsRoutes);
+    const { analyticsRoutes } = await import("./routes/analytics.js");
+    await api.register(analyticsRoutes);
   },
   { prefix: "/api" },
 );

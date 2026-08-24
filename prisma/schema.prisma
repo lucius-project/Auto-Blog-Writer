@@ -34,6 +34,8 @@ model Company {
   topicNodes     TopicNode[]
   snapshots      VisibilitySnapshot[]
   offPageTasks   OffPageTask[]
+  analyticsConnection AnalyticsConnection?
+  analyticsSnapshots  AnalyticsSnapshot[]
 
   @@index([url])
 }
@@ -286,6 +288,37 @@ model OffPageTask {
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId, status])
+}
+
+// Per-tenant GA4 property connection. One property per company for now.
+model AnalyticsConnection {
+  id            String    @id @default(cuid())
+  companyId     String    @unique
+  provider      String    @default("ga4")
+  propertyId    String
+  // { serviceAccountKey: "enc:..." } — encrypted like PublishTarget.config.appPassword
+  config        Json
+  lastSyncedAt  DateTime?
+  lastSyncError String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// Rolling-window GA4 report snapshot (trend + per-post leaderboard).
+model AnalyticsSnapshot {
+  id         String   @id @default(cuid())
+  companyId  String
+  capturedAt DateTime @default(now())
+  rangeDays  Int
+  // { totalUsers, totalSessions, trend: [{date,users,sessions}], topPages: [{path,blogPostId,title,users,sessions}] }
+  summary       Json
+  liveFetchedAt DateTime
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, capturedAt])
 }
 
 // Provider spend + freshness ledger. Enforces the live-results rule.
