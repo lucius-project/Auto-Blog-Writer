@@ -62,6 +62,7 @@ export default function TopNav() {
     {
       key: "seo", label: "SEO", items: [
         { href: `/company/${companyId}/topics`, label: "Topic Graph" },
+        { href: `/company/${companyId}/sitemap`, label: "Site map" },
         { href: `/company/${companyId}/offpage`, label: "Off-page tasks" },
       ],
     },

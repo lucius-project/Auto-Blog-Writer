@@ -37,6 +37,7 @@ model Company {
   analyticsConnection AnalyticsConnection?
   analyticsSnapshots  AnalyticsSnapshot[]
   searchConsoleSnapshots SearchConsoleSnapshot[]
+  linkChecks     LinkCheck[]
   competitors    Competitor[]
 
   @@index([url])
@@ -216,7 +217,7 @@ model PublishTarget {
 // ---------------------------------------------------------------------------
 
 // One row per crawled URL. Gap analysis diffs the TopicGraph against
-// questionsAnswered across these rows.
+// questionsAnswered across these rows; the site-map view uses the link graph.
 model SitePage {
   id        String   @id @default(cuid())
   companyId String
@@ -231,6 +232,12 @@ model SitePage {
   hasSchema         Boolean   @default(false)
   structureScore    Int?
   wordCount         Int?
+  // internal link graph: [{ href, path, anchor, kind: "internal"|"external" }]
+  outboundLinks     Json?
+  // # of other crawled pages on this site that link here (computed post-crawl)
+  inboundInternal   Int       @default(0)
+  // hub page a cluster links back to (home/service/industry, or owner-set)
+  isPillar          Boolean   @default(false)
   lastCrawledAt     DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -239,6 +246,27 @@ model SitePage {
 
   @@unique([companyId, url])
   @@index([companyId, contentType])
+}
+
+// One row per distinct link target found on the site, with its HTTP health.
+// Powers the broken-link report. Re-checked on each crawl (fresh OK links are
+// skipped for a few days to bound requests).
+model LinkCheck {
+  id         String   @id @default(cuid())
+  companyId  String
+  targetUrl  String
+  status     Int?     // HTTP status; null = the request failed outright
+  ok         Boolean  @default(false)
+  kind       String   // internal | external
+  error      String?
+  // where it's linked from: [{ sourceUrl, sourcePath, anchor }]
+  sources    Json?
+  checkedAt  DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, targetUrl])
+  @@index([companyId, ok])
 }
 
 enum TopicStatus {

@@ -482,6 +482,165 @@ export async function managementRoutes(app: FastifyInstance) {
     if (!company) return reply.code(404).send({ error: "not found" });
     return company;
   });
+
+  // ---- Site map: internal link structure, pillar pages, orphans, broken links ----
+  const normPath = (p: string) => (p || "/").split("?")[0]!.replace(/\/+$/, "") || "/";
+
+  app.get("/companies/:companyId/site-map", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    const [pagesRaw, brokenCount, lastCrawl] = await Promise.all([
+      prisma.sitePage.findMany({ where: { companyId }, orderBy: [{ isPillar: "desc" }, { inboundInternal: "desc" }] }),
+      prisma.linkCheck.count({ where: { companyId, ok: false } }),
+      prisma.sitePage.findFirst({ where: { companyId, lastCrawledAt: { not: null } }, orderBy: { lastCrawledAt: "desc" }, select: { lastCrawledAt: true } }),
+    ]);
+    const byPath = new Map<string, (typeof pagesRaw)[number]>();
+    for (const p of pagesRaw) byPath.set(normPath(p.path), p);
+
+    // who links to each page
+    const linkedFrom = new Map<string, { path: string; title: string | null; anchor: string }[]>();
+    for (const src of pagesRaw) {
+      const seen = new Set<string>();
+      for (const l of (src.outboundLinks ?? []) as any[]) {
+        if (l.kind !== "internal") continue;
+        const tgt = byPath.get(normPath(l.path));
+        if (!tgt || tgt.id === src.id || seen.has(tgt.id)) continue;
+        seen.add(tgt.id);
+        const arr = linkedFrom.get(tgt.id) ?? [];
+        arr.push({ path: src.path, title: src.title, anchor: l.anchor });
+        linkedFrom.set(tgt.id, arr);
+      }
+    }
+
+    const view = (p: (typeof pagesRaw)[number]) => ({
+      url: p.url, path: p.path, contentType: p.contentType, title: p.title,
+      primaryTopic: p.primaryTopic, wordCount: p.wordCount, hasSchema: p.hasSchema,
+      inboundInternal: p.inboundInternal, isPillar: p.isPillar,
+      outboundInternal: ((p.outboundLinks ?? []) as any[]).filter((l) => l.kind === "internal").length,
+      outboundExternal: ((p.outboundLinks ?? []) as any[]).filter((l) => l.kind === "external").length,
+      orphan: p.inboundInternal === 0 && !["home", "legal"].includes(p.contentType ?? ""),
+    });
+
+    const pillars = pagesRaw.filter((p) => p.isPillar).map((p) => {
+      const supporters = linkedFrom.get(p.id) ?? [];
+      // content pages on the same topic that DON'T link to this pillar
+      const topicWords = new Set((`${p.primaryTopic ?? ""} ${p.title ?? ""}`).toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3));
+      const missing = pagesRaw
+        .filter((q) => q.id !== p.id && ["blog", "service", "industry"].includes(q.contentType ?? "")
+          && !supporters.some((s) => normPath(s.path) === normPath(q.path))
+          && [...topicWords].some((w) => (`${q.primaryTopic ?? ""} ${q.title ?? ""}`).toLowerCase().includes(w)))
+        .slice(0, 8)
+        .map((q) => ({ path: q.path, title: q.title, contentType: q.contentType }));
+      return { ...view(p), linkedFrom: supporters, missingLinks: missing };
+    });
+
+    const pages = pagesRaw.map(view);
+    return {
+      lastCrawledAt: lastCrawl?.lastCrawledAt ?? null,
+      brokenLinkCount: brokenCount,
+      stats: {
+        total: pages.length,
+        pillars: pillars.length,
+        orphans: pages.filter((p) => p.orphan).length,
+        noInboundPct: pages.length ? Math.round((pages.filter((p) => p.inboundInternal === 0).length / pages.length) * 100) : 0,
+      },
+      pillars,
+      orphans: pages.filter((p) => p.orphan).sort((a, b) => (b.wordCount ?? 0) - (a.wordCount ?? 0)),
+      pages,
+    };
+  });
+
+  const tokens = (s: string) => (s || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+
+  app.get("/companies/:companyId/broken-links", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    const [rows, posts] = await Promise.all([
+      prisma.linkCheck.findMany({ where: { companyId, ok: false }, orderBy: [{ kind: "asc" }, { checkedAt: "desc" }] }),
+      prisma.blogPost.findMany({ where: { companyId, publishedUrl: { not: null } }, select: { id: true, title: true, publishedUrl: true } }),
+    ]);
+    const postByUrl = new Map<string, { id: string; title: string }>();
+    for (const p of posts) postByUrl.set(p.publishedUrl!.replace(/\/$/, ""), { id: p.id, title: p.title });
+    return rows.map((r) => {
+      const srcs = (r.sources ?? []) as any[];
+      const inPosts = [...new Set(srcs.map((s) => postByUrl.get(String(s.sourceUrl).replace(/\/$/, ""))).filter(Boolean))] as { id: string; title: string }[];
+      return {
+        targetUrl: r.targetUrl, status: r.status, kind: r.kind, error: r.error,
+        checkedAt: r.checkedAt, sources: srcs,
+        // a link we can repair automatically: internal target, appears in our blog posts
+        fixable: r.kind === "internal" && inPosts.length > 0,
+        inPosts,
+      };
+    });
+  });
+
+  /**
+   * Repair broken internal links that live in our own published blog posts:
+   * point each bad <a href> at the closest real page (by slug + anchor match),
+   * or unwrap it (keep the text). Fixed posts are re-queued to publish the
+   * update. Site-owned broken links can't be touched — use Export for those.
+   */
+  app.post("/companies/:companyId/broken-links/fix", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    const body = (req.body ?? {}) as { targetUrls?: string[] };
+    const [broken, sitePages, posts] = await Promise.all([
+      prisma.linkCheck.findMany({ where: { companyId, ok: false, kind: "internal" } }),
+      prisma.sitePage.findMany({ where: { companyId }, select: { path: true, title: true, primaryTopic: true, contentType: true } }),
+      prisma.blogPost.findMany({ where: { companyId, publishedUrl: { not: null } } }),
+    ]);
+    const wanted = body.targetUrls?.length ? new Set(body.targetUrls) : null;
+    const badPaths = new Map<string, string>(); // normalized bad path -> full bad target
+    for (const b of broken) {
+      if (wanted && !wanted.has(b.targetUrl)) continue;
+      try { badPaths.set(new URL(b.targetUrl).pathname.replace(/\/+$/, ""), b.targetUrl); } catch { /* skip */ }
+    }
+    if (!badPaths.size) return { ok: true, postsFixed: 0, linksFixed: 0, linksUnwrapped: 0 };
+
+    const candidates = sitePages.filter((p) => !["legal", "other"].includes(p.contentType ?? ""));
+    const bestMatch = (badPath: string, anchor: string): string | null => {
+      const want = new Set([...tokens(badPath.split("/").pop() ?? ""), ...tokens(anchor)]);
+      let best: { path: string; score: number } | null = null;
+      for (const c of candidates) {
+        const have = new Set([...tokens(c.path), ...tokens(c.title ?? ""), ...tokens(c.primaryTopic ?? "")]);
+        let score = 0;
+        for (const w of want) if (have.has(w)) score += 1;
+        if (score > (best?.score ?? 0)) best = { path: c.path, score };
+      }
+      return best && best.score >= 2 ? best.path : null;
+    };
+
+    let postsFixed = 0, linksFixed = 0, linksUnwrapped = 0;
+    const affected: string[] = [];
+    for (const post of posts) {
+      let html = post.bodyHtml;
+      let changed = false;
+      html = html.replace(/<a\b[^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (whole, href: string, text: string) => {
+        let path: string;
+        try { path = new URL(href, post.publishedUrl!).pathname.replace(/\/+$/, ""); } catch { return whole; }
+        if (!badPaths.has(path)) return whole;
+        changed = true;
+        const target = bestMatch(path, text.replace(/<[^>]+>/g, " "));
+        if (target) { linksFixed++; return `<a href="${target}">${text}</a>`; }
+        linksUnwrapped++; return text;
+      });
+      if (changed) {
+        // save the repaired body; published posts go back to review so the
+        // human can push the update (non-destructive — the live page is
+        // untouched until re-approved, which updates it in place)
+        await prisma.blogPost.update({
+          where: { id: post.id },
+          data: { bodyHtml: html, ...(post.status === "published" ? { status: "review" } : {}) },
+        });
+        postsFixed++;
+        affected.push(post.title);
+      }
+    }
+    return { ok: true, postsFixed, linksFixed, linksUnwrapped, affected: affected.slice(0, 20) };
+  });
+
+  app.post("/companies/:companyId/site-map/recheck", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    const job = await getQueue(QUEUES.ingestSite).add(QUEUES.ingestSite, { companyId, maxPages: 120, force: true });
+    return { ok: true, jobId: job.id };
+  });
 }
 
 /** One-click actions: check gaps, expand graph, write next blogs. */

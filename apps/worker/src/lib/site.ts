@@ -123,6 +123,39 @@ export function extractPage(html: string): PageExtract {
   };
 }
 
+export interface PageLink { href: string; path: string; anchor: string; kind: "internal" | "external" }
+
+const norm = (h: string) => h.replace(/^www\./, "").toLowerCase();
+
+/**
+ * Pull the <a href> graph from a page. Relative hrefs resolve against pageUrl;
+ * fragments, mailto/tel/js are dropped; kind is internal when the host matches
+ * the page's host (www-insensitive). Deduped by resolved URL (first anchor wins).
+ */
+export function extractLinks(html: string, pageUrl: string): PageLink[] {
+  const host = norm(new URL(pageUrl).hostname);
+  const strip = (s: string) => s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  // ignore nav/footer? keep everything — the graph is the point
+  const out = new Map<string, PageLink>();
+  for (const m of html.matchAll(/<a\b[^>]*?href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const raw = (m[1] ?? "").trim();
+    if (!raw || /^(mailto:|tel:|javascript:|#|data:)/i.test(raw)) continue;
+    let u: URL;
+    try { u = new URL(raw, pageUrl); } catch { continue; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    u.hash = "";
+    const key = u.toString().replace(/\/$/, "");
+    if (out.has(key)) continue;
+    out.set(key, {
+      href: u.toString(),
+      path: u.pathname + (u.search || ""),
+      anchor: strip(m[2] ?? "").slice(0, 120),
+      kind: norm(u.hostname) === host ? "internal" : "external",
+    });
+  }
+  return [...out.values()];
+}
+
 /** 0-100 structural extractability score (answer-block/table/FAQ heuristics). */
 export function structureScore(html: string, ex: PageExtract): number {
   let s = 0;

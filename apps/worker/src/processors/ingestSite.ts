@@ -4,8 +4,9 @@ import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import {
   fetchText, auditRobots, discoverSitemaps, sitemapUrls,
-  extractPage, structureScore,
+  extractPage, extractLinks, structureScore, type PageLink,
 } from "../lib/site.js";
+import { computeLinkGraph, checkLinks } from "../lib/linkAudit.js";
 
 /**
  * Stage 1 — Site ingestion.
@@ -64,20 +65,22 @@ export async function ingestSite(job: Job) {
   const picked = sameHost.sort((a, b) => prio(a) - prio(b)).slice(0, payload.maxPages);
 
   // 4. fetch + extract + classify (batched LLM calls)
-  type Extracted = { url: string; path: string; ex: ReturnType<typeof extractPage>; score: number };
+  type Extracted = { url: string; path: string; ex: ReturnType<typeof extractPage>; score: number; links: PageLink[] };
   const extracted: Extracted[] = [];
   for (const url of picked) {
     if (!payload.force) {
       const existing = await prisma.sitePage.findUnique({
         where: { companyId_url: { companyId: company.id, url } },
       });
-      if (existing?.lastCrawledAt && Date.now() - existing.lastCrawledAt.getTime() < 6 * 24 * 3600e3) continue;
+      // still re-crawl if we've never captured its link graph
+      if (existing?.lastCrawledAt && existing.outboundLinks != null
+        && Date.now() - existing.lastCrawledAt.getTime() < 6 * 24 * 3600e3) continue;
     }
     try {
       const { status, text } = await fetchText(url);
       if (status !== 200) continue;
       const ex = extractPage(text);
-      extracted.push({ url, path: new URL(url).pathname, ex, score: structureScore(text, ex) });
+      extracted.push({ url, path: new URL(url).pathname, ex, score: structureScore(text, ex), links: extractLinks(text, url) });
     } catch { /* skip page */ }
   }
 
@@ -102,19 +105,26 @@ export async function ingestSite(job: Job) {
           contentType: c.contentType, title: p.ex.title, primaryTopic: c.primaryTopic,
           questionsAnswered: c.questionsAnswered, entities: c.entities,
           hasSchema: p.ex.hasJsonLd, structureScore: p.score,
-          wordCount: p.ex.wordCount, lastCrawledAt: new Date(),
+          wordCount: p.ex.wordCount, outboundLinks: p.links as any, lastCrawledAt: new Date(),
         },
         update: {
           contentType: c.contentType, title: p.ex.title, primaryTopic: c.primaryTopic,
           questionsAnswered: c.questionsAnswered, entities: c.entities,
           hasSchema: p.ex.hasJsonLd, structureScore: p.score,
-          wordCount: p.ex.wordCount, lastCrawledAt: new Date(),
+          wordCount: p.ex.wordCount, outboundLinks: p.links as any, lastCrawledAt: new Date(),
         },
       });
       classified++;
     }
   }
 
-  console.log(`[ingest-site] ${company.name}: ${urls.length} urls, ${extracted.length} crawled, ${classified} classified, blocked=[${blocked.join(",")}]`);
-  return { status: "ok", companyId: company.id, totalUrls: urls.length, crawled: extracted.length, classified, aiCrawlersBlocked: blocked };
+  // 5. link graph: inbound counts + pillar flags, then HTTP health of every target
+  await computeLinkGraph(company.id).catch((e) => console.warn(`[ingest-site] link graph: ${e?.message}`));
+  const linkAudit = await checkLinks(company.id, { max: 600 }).catch((e) => {
+    console.warn(`[ingest-site] link check: ${e?.message}`);
+    return { checked: 0, broken: 0 };
+  });
+
+  console.log(`[ingest-site] ${company.name}: ${urls.length} urls, ${extracted.length} crawled, ${classified} classified, ${linkAudit.broken} broken links, blocked=[${blocked.join(",")}]`);
+  return { status: "ok", companyId: company.id, totalUrls: urls.length, crawled: extracted.length, classified, brokenLinks: linkAudit.broken, aiCrawlersBlocked: blocked };
 }
