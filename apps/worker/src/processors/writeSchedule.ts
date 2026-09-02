@@ -21,7 +21,7 @@ const jaccard = (a: Set<string>, b: Set<string>) => {
 export async function writeSchedule(job: Job) {
   const payload = WriteSchedulePayload.parse(job.data);
   const nodes = await prisma.topicNode.findMany({
-    where: { companyId: payload.companyId, status: { in: ["unanswered", "answered_weak", "stale"] }, blogPostId: null },
+    where: { companyId: payload.companyId, status: { in: ["unanswered", "answered_weak", "competitor_owned", "stale"] }, blogPostId: null },
     orderBy: [{ score: { sort: "desc", nulls: "last" } }],
     take: payload.count,
   });

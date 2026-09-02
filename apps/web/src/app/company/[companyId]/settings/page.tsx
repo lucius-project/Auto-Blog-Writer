@@ -106,15 +106,17 @@ export default function Settings({ params }: { params: Promise<{ companyId: stri
       </div>
 
       <div className="mt-6 rounded-xl border bg-white p-5">
-        <div className="font-semibold">Testimonial book & grounding documents</div>
+        <div className="font-semibold">Client proof: testimonials & Google reviews</div>
         <p className="mt-1 text-xs text-gray-500">
-          Upload your testimonial book (PDF). Every testimonial is extracted and stored individually with
-          industry/keyword tags — each article then automatically pulls only the 3–4 most relevant real
-          examples (matched by vertical and topic, no AI search) so blogs carry genuine social proof.
+          Upload your testimonial book (PDF) and paste in your Google reviews. Each quote is extracted and
+          stored individually with industry/keyword tags. Every article pulls the most relevant few — and
+          now <b>rotates across different clients</b> so drafts stop leaning on the same person.
         </p>
         <DocumentUpload companyId={companyId} />
+        <TestimonialsList companyId={companyId} />
       </div>
 
+      <Competitors companyId={companyId} onNotice={setMsg} />
       <LocationsManager company={company} reload={load} onNotice={setMsg} />
       <PublishTargets company={company} reload={load} onNotice={setMsg} companyId={companyId} />
       <Automation companyId={companyId} onNotice={setMsg} />
@@ -131,13 +133,24 @@ function DocumentUpload({ companyId }: { companyId: string }) {
     fetch(`${API}/api/companies/${companyId}/documents`).then((r) => r.json()).then(setDocs), [companyId]);
   useEffect(() => { load(); const t = setInterval(load, 8000); return () => clearInterval(t); }, [load]);
 
-  const upload = async (file: File) => {
+  const [reviewText, setReviewText] = useState("");
+  const [showPaste, setShowPaste] = useState(false);
+
+  const upload = async (file: File, kind = "testimonials") => {
     setUploading(true);
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("kind", kind);
     await fetch(`${API}/api/companies/${companyId}/documents`, { method: "POST", body: fd });
     setUploading(false);
     load();
+  };
+
+  const submitReviews = async () => {
+    if (reviewText.trim().length < 30) return;
+    const file = new File([reviewText], `google-reviews-${Date.now()}.txt`, { type: "text/plain" });
+    await upload(file, "google_reviews");
+    setReviewText(""); setShowPaste(false);
   };
 
   const remove = async (d: any) => {
@@ -152,16 +165,39 @@ function DocumentUpload({ companyId }: { companyId: string }) {
 
   return (
     <div className="mt-3">
-      <label className="inline-block cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white">
-        {uploading ? "Uploading…" : "Upload testimonial book (PDF)"}
-        <input type="file" accept=".pdf,.txt,.md" className="hidden"
-          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} disabled={uploading} />
-      </label>
-      <span className="ml-3 text-sm text-gray-600">{docs.testimonialCount} testimonials extracted and searchable</span>
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="inline-block cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white">
+          {uploading ? "Uploading…" : "Upload testimonial book (PDF / text)"}
+          <input type="file" accept=".pdf,.txt,.md" className="hidden"
+            onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} disabled={uploading} />
+        </label>
+        <button onClick={() => setShowPaste((v) => !v)} className="rounded-lg border px-4 py-2 text-sm font-medium">
+          {showPaste ? "Cancel" : "Paste Google reviews"}
+        </button>
+        <span className="text-sm text-gray-600">{docs.testimonialCount} quotes extracted and searchable</span>
+      </div>
+
+      {showPaste && (
+        <div className="mt-3 rounded-lg bg-gray-50 p-3">
+          <p className="text-xs text-gray-500">
+            Copy your reviews from your Google Business Profile (reviewer name + text, one after another) and paste them here.
+            Each becomes a searchable, rotatable quote tagged as a Google review.
+          </p>
+          <textarea value={reviewText} onChange={(e) => setReviewText(e.target.value)} rows={8}
+            placeholder={"Jane D.\n★★★★★ DataStream moved our whole office to new laptops over a weekend with zero downtime...\n\nMark P.\n★★★★★ Response time is under 10 minutes every time..."}
+            className="mt-2 w-full rounded border px-2 py-1 font-mono text-xs" />
+          <button onClick={submitReviews} disabled={uploading || reviewText.trim().length < 30}
+            className="mt-2 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50">
+            {uploading ? "Extracting…" : "Add reviews"}
+          </button>
+        </div>
+      )}
+
       <div className="mt-3 space-y-1 text-sm">
         {docs.documents.map((d) => (
           <div key={d.id} className="flex items-center gap-2">
             <span className="font-medium">{d.filename}</span>
+            {(/google|review/i.test(d.kind)) && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-xs text-blue-700">Google reviews</span>}
             <span className={`rounded-full px-2 py-0.5 text-xs ${d.status === "ready" ? "bg-green-100 text-green-700" : d.status === "failed" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
               {d.status === "extracting" ? "extracting…" : d.status}
             </span>
@@ -172,6 +208,146 @@ function DocumentUpload({ companyId }: { companyId: string }) {
             </button>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function TestimonialsList({ companyId }: { companyId: string }) {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open || rows) return;
+    fetch(`${API}/api/companies/${companyId}/testimonials`).then((r) => r.json()).then(setRows).catch(() => setRows([]));
+  }, [open, rows, companyId]);
+
+  return (
+    <div className="mt-4 border-t pt-3">
+      <button onClick={() => setOpen((v) => !v)} className="text-xs font-medium text-blue-600">
+        {open ? "▾ Hide stored quotes" : "▸ Show stored quotes & how often each is used"}
+      </button>
+      {open && (
+        <div className="mt-2 max-h-80 overflow-y-auto text-xs">
+          {!rows && <div className="text-gray-400">loading…</div>}
+          {rows && rows.length === 0 && <div className="text-gray-400">No quotes yet.</div>}
+          {rows && rows.length > 0 && (
+            <table className="w-full">
+              <thead><tr className="border-b text-left text-[10px] uppercase text-gray-400">
+                <th className="py-1">Client</th><th>Industry</th><th>Source</th><th>Used in drafts</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((t) => (
+                  <tr key={t.id} className="border-b">
+                    <td className="py-1 pr-2">{t.clientName ?? "—"}{t.location ? ` · ${t.location}` : ""}</td>
+                    <td className="pr-2 text-gray-500">{t.industry ?? "—"}</td>
+                    <td className="pr-2">{t.source === "google" ? "Google review" : "testimonial"}</td>
+                    <td className={t.usedCount > 2 ? "font-semibold text-amber-700" : "text-gray-500"}>
+                      {t.usedCount ?? 0}{t.lastUsedAt ? ` · last ${new Date(t.lastUsedAt).toLocaleDateString()}` : ""}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function Competitors({ companyId, onNotice }: { companyId: string; onNotice: (m: string) => void }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [draft, setDraft] = useState({ domain: "", label: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() =>
+    fetch(`${API}/api/companies/${companyId}/competitors`).then((r) => r.json()).then(setRows), [companyId]);
+  useEffect(() => { load(); }, [load]);
+  const anyCrawling = rows.some((r) => r.status === "crawling" || r.status === "pending");
+  useEffect(() => {
+    if (!anyCrawling) return;
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [anyCrawling, load]);
+
+  const add = async () => {
+    if (!draft.domain.trim()) return;
+    setErr(null);
+    const r = await fetch(`${API}/api/companies/${companyId}/competitors`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ domain: draft.domain, label: draft.label || undefined }),
+    });
+    if (!r.ok) { setErr((await r.json()).error ?? "could not add"); return; }
+    setDraft({ domain: "", label: "" });
+    load();
+  };
+  const remove = async (id: string) => { await fetch(`${API}/api/competitors/${id}`, { method: "DELETE" }); load(); };
+  const analyze = async () => {
+    setBusy(true);
+    const r = await (await fetch(`${API}/api/companies/${companyId}/competitors/analyze`, { method: "POST" })).json();
+    setBusy(false);
+    onNotice(r.ok
+      ? `Assessing ${r.competitors} competitor${r.competitors === 1 ? "" : "s"} — crawling their content, then adding the topics they cover that you're missing. This page updates itself.`
+      : (r.error ?? "nothing to assess"));
+    load();
+  };
+
+  const chip = (s: string) => {
+    const map: Record<string, string> = {
+      ready: "bg-green-100 text-green-700", crawling: "bg-amber-100 text-amber-700",
+      pending: "bg-gray-100 text-gray-600", failed: "bg-red-100 text-red-700",
+    };
+    return map[s] ?? "bg-gray-100 text-gray-600";
+  };
+
+  return (
+    <div className="mt-6 rounded-xl border bg-white p-5">
+      <div className="flex items-center justify-between">
+        <div className="font-semibold">Competitors</div>
+        <button onClick={analyze} disabled={busy || !rows.length}
+          className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50">
+          {busy ? "Starting…" : "Assess competitors now"}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-gray-500">
+        We crawl each competitor, map the buyer questions their content answers, and add the ones you're
+        missing to your topic graph so the writer covers them. A listed competitor ranking where you're
+        absent also becomes a top-priority gap.
+      </p>
+
+      <div className="mt-3 space-y-1 text-sm">
+        {rows.map((c) => (
+          <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-gray-50 px-3 py-2">
+            <span className="font-medium">{c.domain}</span>
+            {c.label && <span className="text-xs text-gray-500">{c.label}</span>}
+            <span className={`rounded-full px-2 py-0.5 text-xs ${chip(c.status)}`}>
+              {c.status === "crawling" ? "assessing…" : c.status}
+            </span>
+            {c.status === "ready" && (
+              <span className="text-xs text-gray-500">
+                {c.pagesCrawled} pages assessed · {c.gapsFound} new topic{c.gapsFound === 1 ? "" : "s"} found
+              </span>
+            )}
+            {c.error && <span className="text-xs text-red-600">{c.error}</span>}
+            <button onClick={() => remove(c.id)} className="ml-auto text-xs text-red-500 hover:underline">remove</button>
+          </div>
+        ))}
+        {!rows.length && <div className="text-xs text-gray-400">No competitors added yet.</div>}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-end gap-2 border-t pt-3">
+        <label className="text-xs">Competitor domain<br />
+          <input value={draft.domain} onChange={(e) => setDraft({ ...draft, domain: e.target.value })}
+            onKeyDown={(e) => e.key === "Enter" && add()} placeholder="competitor.com"
+            className="mt-1 w-52 rounded border px-2 py-1" />
+        </label>
+        <label className="text-xs">Label (optional)<br />
+          <input value={draft.label} onChange={(e) => setDraft({ ...draft, label: e.target.value })}
+            placeholder="e.g. main local rival" className="mt-1 w-44 rounded border px-2 py-1" />
+        </label>
+        <button onClick={add} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white">Add</button>
+        {err && <span className="text-xs text-red-600">{err}</span>}
       </div>
     </div>
   );
@@ -433,7 +609,7 @@ function PublishTargets({ company, reload, onNotice, companyId }: { company: any
           <button onClick={addWp} className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white">Connect</button>
         </div>
       )}
-      <p className="mt-2 text-xs text-gray-400">Octane publishing uses the "Connect Octane" session from the dashboard. WordPress uses an application password (WP admin → Users → Application Passwords), stored encrypted.</p>
+      <p className="mt-2 text-xs text-gray-400">WordPress uses an application password (WP admin → Users → Application Passwords), stored encrypted.</p>
     </div>
   );
 }

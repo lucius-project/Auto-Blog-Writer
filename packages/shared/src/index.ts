@@ -20,6 +20,7 @@ export const QUEUES = {
   writeSchedule: "write-schedule",
   offpageDraft: "offpage-draft",
   syncAnalytics: "sync-analytics",
+  analyzeCompetitors: "analyze-competitors",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -115,6 +116,18 @@ export const SyncAnalyticsPayload = z.object({
 });
 export type SyncAnalyticsPayload = z.infer<typeof SyncAnalyticsPayload>;
 
+/**
+ * Crawl the operator's listed competitor domains, map the buyer questions their
+ * content answers, and seed the ones missing from the tenant's Topic Graph.
+ */
+export const AnalyzeCompetitorsPayload = z.object({
+  companyId: z.string().min(1),
+  /** omit = every competitor for the company */
+  competitorId: z.string().optional(),
+  maxPagesPerCompetitor: z.number().int().min(1).max(200).default(50),
+});
+export type AnalyzeCompetitorsPayload = z.infer<typeof AnalyzeCompetitorsPayload>;
+
 export const JOB_PAYLOADS = {
   [QUEUES.ingestSite]: IngestSitePayload,
   [QUEUES.researchCompany]: ResearchCompanyPayload,
@@ -126,6 +139,7 @@ export const JOB_PAYLOADS = {
   [QUEUES.writeSchedule]: WriteSchedulePayload,
   [QUEUES.offpageDraft]: OffpageDraftPayload,
   [QUEUES.syncAnalytics]: SyncAnalyticsPayload,
+  [QUEUES.analyzeCompetitors]: AnalyzeCompetitorsPayload,
 } as const;
 
 // ---------------------------------------------------------------------------

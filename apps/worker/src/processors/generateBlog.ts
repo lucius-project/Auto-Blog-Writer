@@ -3,7 +3,7 @@ import { GenerateBlogPayload } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import { runQaGates } from "../lib/qa.js";
-import { relevantTestimonials } from "../lib/retrieval.js";
+import { relevantTestimonials, markTestimonialsUsed } from "../lib/retrieval.js";
 import { countryName } from "../lib/taxonomy.js";
 
 interface DraftJson {
@@ -46,6 +46,16 @@ export async function generateBlog(job: Job, onStep?: (step: string) => Promise<
   const profile = (company.profile ?? {}) as any;
   const vProfile = (vertical?.profile ?? {}) as any;
 
+  const competitors = await prisma.competitor.findMany({
+    where: { companyId: company.id }, select: { domain: true },
+  });
+  const topicCompetitors: string[] = [
+    ...new Set([...(evidence.competitorDomains ?? []), ...(evidence.listedCompetitorsPresent ?? [])]),
+  ];
+  const competitorBlock = competitors.length
+    ? `COMPETITORS: ${competitors.map((c) => c.domain).join(", ")}. ${topicCompetitors.length ? `For THIS question, these already have content: ${topicCompetitors.join(", ")}. ` : ""}Your article must be more complete, more specific, and better structured for AI extraction than theirs — do NOT name or link them.`
+    : "";
+
   const pricing = await prisma.pricingRange.findMany({ where: { companyId: company.id }, orderBy: { service: "asc" } });
   const pricingBlock = pricing.length
     ? `OFFICIAL PRICING RANGES (the ONLY allowed source for company pricing — always present as ranges, exactly these numbers, never narrowed to a single figure, never extended):
@@ -53,10 +63,10 @@ ${pricing.map((r) => `- ${r.service}: $${r.low}–$${r.high} ${r.unit}${r.notes 
     : "";
 
   const testimonials = await relevantTestimonials(company.id, {
-    question: node.question, category: node.category, verticalName: vertical?.name, take: 4,
+    question: node.question, category: node.category, verticalName: vertical?.name, take: 5,
   });
   const testimonialBlock = testimonials.length
-    ? `REAL CLIENT TESTIMONIALS & EXAMPLES (from the company's testimonial book — quote or paraphrase ACCURATELY, use for the real-example section and social proof; anonymize client names to first name + industry if the full name feels sensitive; NEVER alter numbers):
+    ? `REAL CLIENT TESTIMONIALS & EXAMPLES (from the company's own client testimonials / Google reviews — quote or paraphrase ACCURATELY, use for the real-example section and social proof; these are DIFFERENT clients — pick the ONE that best fits this article's topic and location, don't default to the first; anonymize client names to first name + industry if the full name feels sensitive; only claim a client's city if it is given below; NEVER alter numbers):
 ${testimonials.map((t, i) => `[${i + 1}] ${t.clientName ?? "Client"}${t.industry ? ` (${t.industry})` : ""}${t.location ? `, ${t.location}` : ""}: "${t.quote.slice(0, 500)}"${t.resultClaim ? ` — Result: ${t.resultClaim}` : ""}${(t.metrics as string[]).length ? ` — Metrics: ${(t.metrics as string[]).join("; ")}` : ""}`).join("\n")}`
     : "";
 
@@ -66,6 +76,7 @@ PROFILE: ${JSON.stringify(profile).slice(0, 2500)}
 ${vertical ? `VERTICAL: ${vertical.name}\nVERTICAL PROFILE: ${JSON.stringify(vProfile).slice(0, 2000)}` : ""}
 ${location ? `LOCATION: ${location.city}, ${location.state ?? ""}, ${countryName(location.country)} — use ${countryName(location.country)} regulations, terminology and currency, never another country's` : ""}
 ${pricingBlock}
+${competitorBlock}
 ${testimonialBlock}
 LIVE EVIDENCE (from gap analysis): ${JSON.stringify({ peopleAlsoAsk: evidence.peopleAlsoAsk, competitorsCited: evidence.competitorsCited, hasAiOverview: evidence.hasAiOverview }).slice(0, 1200)}
 EXISTING SITE PAGES (for internal links — use these exact paths): ${sitePages.map((p) => p.path).join(", ")}`;
@@ -99,15 +110,16 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
     { role: "user", content: `${contract}\n\nARTICLE JSON:\n${JSON.stringify(draft)}` },
   ], { companyId: company.id, tag: "generate-critique", maxTokens: 16000, temperature: 0.2, blogPostId: refreshPost?.id, runRef: costRef });
 
-  const testimonialUsed = (bodyHtml: string): boolean => {
-    if (!testimonials.length) return true;
+  const usedTestimonialIds = (bodyHtml: string): string[] => {
     const body = bodyHtml.replace(/<[^>]+>/g, " ").toLowerCase();
-    return testimonials.some((t) => {
+    return testimonials.filter((t) => {
       const name = (t.clientName ?? "").split(" ")[0]?.toLowerCase();
       const frag = t.quote.toLowerCase().replace(/\s+/g, " ").slice(10, 48);
       return (name && name.length > 2 && body.includes(name)) || (frag.length > 20 && body.includes(frag));
-    });
+    }).map((t) => t.id);
   };
+  const testimonialUsed = (bodyHtml: string): boolean =>
+    !testimonials.length || usedTestimonialIds(bodyHtml).length > 0;
   const runGates = (art: DraftJson, ld: unknown) => {
     const qaRes = runQaGates({ ...art, jsonLd: ld });
     const used = testimonialUsed(art.bodyHtml);
@@ -135,6 +147,8 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
   const critiquedFinal = article;
 
   await step("saving");
+  const testimonialIds = usedTestimonialIds(critiquedFinal.bodyHtml);
+  await markTestimonialsUsed(testimonialIds);
   if (refreshPost) {
     // rewrite-in-place: keep the slug (and CMS page identity); back to review
     const prevPublish = ((refreshPost.qa as any) ?? {}).publish;
@@ -152,6 +166,7 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
           jsonLd: jsonLd as any,
           internalLinks: critiquedFinal.internalLinks,
           targetQuestion: node.question,
+          testimonialIds,
         },
         qa: { ...(qa as any), rewriteOf: refreshPost.publishedUrl ?? null, publish: prevPublish } as any,
       },
@@ -180,6 +195,7 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
         jsonLd: jsonLd as any,
         internalLinks: critiquedFinal.internalLinks,
         targetQuestion: node.question,
+        testimonialIds,
       },
       qa: qa as any,
     },

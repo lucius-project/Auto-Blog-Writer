@@ -36,8 +36,34 @@ model Company {
   offPageTasks   OffPageTask[]
   analyticsConnection AnalyticsConnection?
   analyticsSnapshots  AnalyticsSnapshot[]
+  competitors    Competitor[]
 
   @@index([url])
+}
+
+// Operator-supplied competitor domains. We crawl each, map the buyer questions
+// their content answers, and diff that against the tenant's Topic Graph so the
+// content engine covers what competitors cover. See processors/analyzeCompetitors.
+model Competitor {
+  id            String    @id @default(cuid())
+  companyId     String
+  domain        String // normalized hostname, e.g. "example.com"
+  label         String?
+  // crawl output: [{ path, title, primaryTopic, contentType, questionsAnswered: string[] }]
+  coverage      Json?
+  pagesCrawled  Int       @default(0)
+  // competitor questions that became new/uncovered topic nodes at the last diff
+  gapsFound     Int       @default(0)
+  status        String    @default("pending") // pending | crawling | ready | failed
+  lastCrawledAt DateTime?
+  error         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, domain])
+  @@index([companyId])
 }
 
 model Location {
@@ -373,6 +399,12 @@ model Testimonial {
   metrics    Json?
   services   String[] @default([])
   keywords   String[] @default([])
+  // "book" (uploaded testimonial doc) | "google" (pasted Google reviews) | "other"
+  source     String   @default("book")
+  // rotation: how often / how recently this quote has been used in a draft, so
+  // retrieval can spread social proof across many clients instead of repeating one
+  usedCount  Int      @default(0)
+  lastUsedAt DateTime?
   createdAt  DateTime @default(now())
 
   @@index([companyId, industry])

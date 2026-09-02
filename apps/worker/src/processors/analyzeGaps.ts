@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import { serpProbe } from "../lib/dataforseo.js";
 import { TEMPLATES, frameworksFor, fillTemplate } from "../lib/taxonomy.js";
+import { seedCompetitorTopics } from "../lib/competitorTopics.js";
 
 const INTENT_W: Record<string, number> = { awareness: 0.6, consideration: 0.85, decision: 1.0, compliance: 0.95 };
 
@@ -44,33 +45,80 @@ export async function analyzeGaps(job: Job) {
     }
   }
 
+  // Templates without a [location] slot produce byte-identical question text
+  // regardless of which location fills them in. Seeding those per-location
+  // anyway just triplicates (etc.) the same topic across a multi-location
+  // tenant's graph — and worse, can lead to near-duplicate articles being
+  // written for the same query under different locations. Seed those once
+  // per distinct vertical name (locationId: null = applies company-wide),
+  // using the first location that has that vertical as the representative.
+  const canonicalPairByVertical = new Map<string, (typeof pairs)[number]>();
+  for (const pair of pairs) {
+    const key = pair.vars.vertical!;
+    if (!canonicalPairByVertical.has(key)) canonicalPairByVertical.set(key, pair);
+  }
+
   let seeded = 0;
+  const upsertNode = async (
+    locationId: string | null, verticalId: string | null, question: string,
+    metaInfo: { category: string; funnelStage: string; source: string },
+  ) => {
+    // Prisma rejects null inside a compound-unique `where`; the company-wide
+    // (locationId: null) rows need findFirst + create instead of upsert.
+    if (locationId === null) {
+      const exists = await prisma.topicNode.findFirst({
+        where: { companyId: company.id, locationId: null, verticalId, question },
+        select: { id: true },
+      });
+      if (!exists) {
+        await prisma.topicNode.create({
+          data: { companyId: company.id, locationId: null, verticalId, question, category: metaInfo.category, funnelStage: metaInfo.funnelStage, source: metaInfo.source },
+        });
+      }
+      seeded++;
+      return;
+    }
+    await prisma.topicNode.upsert({
+      where: { companyId_locationId_verticalId_question: { companyId: company.id, locationId, verticalId, question } as any },
+      create: { companyId: company.id, locationId, verticalId, question, category: metaInfo.category, funnelStage: metaInfo.funnelStage, source: metaInfo.source },
+      update: {},
+    });
+    seeded++;
+  };
+
+  // location-agnostic templates: once per distinct vertical
+  for (const pair of canonicalPairByVertical.values()) {
+    for (const t of TEMPLATES) {
+      if (t.q.includes("[location]")) continue;
+      if (t.q.includes("[service]")) {
+        for (const svc of ["managed IT services", "cybersecurity", "co-managed IT", "backup and disaster recovery"]) {
+          await upsertNode(null, pair.verticalId, fillTemplate(t.q, { ...pair.vars, service: svc }), { category: t.category, funnelStage: t.funnelStage, source: "taxonomy" });
+        }
+      } else {
+        await upsertNode(null, pair.verticalId, fillTemplate(t.q, pair.vars), { category: t.category, funnelStage: t.funnelStage, source: "taxonomy" });
+      }
+    }
+  }
+
+  // location-specific templates + buyer questions: per (location, vertical) pair
   for (const pair of pairs) {
     const questions = new Map<string, { category: string; funnelStage: string; source: string }>();
     for (const t of TEMPLATES) {
-      // service templates: instantiate for the 4 core services to bound size
-      if (t.q.includes("[service]")) {
-        for (const svc of ["managed IT services", "cybersecurity", "co-managed IT", "backup and disaster recovery"]) {
-          questions.set(fillTemplate(t.q, { ...pair.vars, service: svc }), { category: t.category, funnelStage: t.funnelStage, source: "taxonomy" });
-        }
-      } else {
-        questions.set(fillTemplate(t.q, pair.vars), { category: t.category, funnelStage: t.funnelStage, source: "taxonomy" });
-      }
+      if (!t.q.includes("[location]")) continue;
+      questions.set(fillTemplate(t.q, pair.vars), { category: t.category, funnelStage: t.funnelStage, source: "taxonomy" });
     }
     for (const q of pair.buyerQs) questions.set(q, { category: "vertical", funnelStage: "consideration", source: "research" });
     for (const [question, metaInfo] of questions) {
-      await prisma.topicNode.upsert({
-        where: { companyId_locationId_verticalId_question: {
-          companyId: company.id, locationId: pair.locationId, verticalId: pair.verticalId, question,
-        } as any },
-        create: {
-          companyId: company.id, locationId: pair.locationId, verticalId: pair.verticalId,
-          question, category: metaInfo.category, funnelStage: metaInfo.funnelStage, source: metaInfo.source,
-        },
-        update: {},
-      });
-      seeded++;
+      await upsertNode(pair.locationId, pair.verticalId, question, metaInfo);
     }
+  }
+
+  // ---- 1a. Competitor coverage -> seed the topics competitors cover but we don't ----
+  try {
+    const competitorSeeded = await seedCompetitorTopics(company.id);
+    seeded += competitorSeeded;
+  } catch (e: any) {
+    console.warn(`[analyze-gaps] competitor topic seeding failed: ${e?.message}`);
   }
 
   // ---- 1b. Graph expansion toward full coverage (1000-2000 questions) ----
@@ -125,13 +173,31 @@ export async function analyzeGaps(job: Job) {
 
   // ---- 3. LIVE evidence probes on the most promising gaps ----
   const candidates = await prisma.topicNode.findMany({
-    where: { companyId: company.id, status: { in: ["unanswered", "answered_weak"] } },
+    where: { companyId: company.id, status: { in: ["unanswered", "answered_weak", "competitor_owned"] } },
   });
   const prelim = (n: (typeof candidates)[number]) =>
-    (INTENT_W[n.funnelStage] ?? 0.7) * (n.category === "local" ? 1.2 : 1) * (n.status === "unanswered" ? 1 : 0.8);
+    (INTENT_W[n.funnelStage] ?? 0.7) * (n.category === "local" ? 1.2 : 1)
+    * (n.status === "competitor_owned" ? 1.3 : n.status === "unanswered" ? 1 : 0.8);
   const probeTargets = candidates.sort((a, b) => prelim(b) - prelim(a)).slice(0, payload.liveProbeCount);
 
+  // operator-listed competitors: a listed domain winning a query where we're
+  // absent is the strongest "write this now" signal we have.
+  const listedCompetitors = (await prisma.competitor.findMany({
+    where: { companyId: company.id }, select: { domain: true },
+  })).map((c) => c.domain.replace(/^www\./, ""));
+
   const directoryDomains = new Map<string, number>();
+  // competitor visibility scoreboard: how often each domain shows up across the
+  // probed buyer questions (organic top-10 + AI Overview citations).
+  const tenantNorm = tenantHost.replace(/^www\./, "");
+  const domainPresence = new Map<string, { organic: number; ai: number }>();
+  const bump = (d: string, kind: "organic" | "ai") => {
+    if (!d || d === tenantNorm) return;
+    const cur = domainPresence.get(d) ?? { organic: 0, ai: 0 };
+    cur[kind]++;
+    domainPresence.set(d, cur);
+  };
+  let tenantOrganic = 0, tenantAi = 0;
   let probed = 0;
   for (const node of probeTargets) {
     try {
@@ -140,16 +206,31 @@ export async function analyzeGaps(job: Job) {
       const weakness = probe.hasAiOverview ? (probe.tenantInAiOverview ? 0.2 : 0.9) : 0.6;
       const winnability = probe.tenantInOrganicTop10 ? 0.9 : 0.6;
       const demand = 0.5 + Math.min(0.5, probe.peopleAlsoAsk.length * 0.05);
-      const score = demand * (INTENT_W[node.funnelStage] ?? 0.7) * 1.0 * weakness * winnability * 100;
+      let score = demand * (INTENT_W[node.funnelStage] ?? 0.7) * 1.0 * weakness * winnability * 100;
+
+      const seenDomains = new Set([...probe.organicDomains, ...probe.aiOverviewDomains]);
+      const listedCompetitorsPresent = listedCompetitors.filter((d) => seenDomains.has(d));
+      const tenantPresent = probe.tenantInAiOverview || probe.tenantInOrganicTop10;
+      const competitorOwned = listedCompetitorsPresent.length > 0 && !tenantPresent;
+      if (competitorOwned) score *= 1.3;
+
       await prisma.topicNode.update({
         where: { id: node.id },
         data: {
           score,
-          scoreParts: { demand, intent: INTENT_W[node.funnelStage] ?? 0.7, weakness, winnability },
-          evidence: { ...probe, competitorsCited },
-          status: probe.tenantInAiOverview ? "answered_strong" : node.status,
+          scoreParts: { demand, intent: INTENT_W[node.funnelStage] ?? 0.7, weakness, winnability, competitorOwned },
+          evidence: { ...probe, competitorsCited, listedCompetitorsPresent },
+          status: probe.tenantInAiOverview
+            ? "answered_strong"
+            : competitorOwned
+              ? "competitor_owned"
+              : node.status,
         },
       });
+      for (const d of new Set(probe.organicDomains)) bump(d, "organic");
+      for (const d of new Set(probe.aiOverviewDomains)) bump(d, "ai");
+      if (probe.tenantInOrganicTop10) tenantOrganic++;
+      if (probe.tenantInAiOverview) tenantAi++;
       for (const d of competitorsCited) {
         if (/reddit|clutch|cloudtango|yelp|upcity|g2\.com|expertise|designrush|goodfirms/.test(d)) {
           directoryDomains.set(d, (directoryDomains.get(d) ?? 0) + 1);
@@ -157,15 +238,16 @@ export async function analyzeGaps(job: Job) {
       }
       // PAA questions become new graph nodes (source: paa)
       for (const paa of probe.peopleAlsoAsk.slice(0, 5)) {
-        await prisma.topicNode.upsert({
-          where: { companyId_locationId_verticalId_question: {
-            companyId: company.id, locationId: node.locationId, verticalId: node.verticalId, question: paa,
-          } as any },
-          create: {
+        const existingPaa = await prisma.topicNode.findFirst({
+          where: { companyId: company.id, locationId: node.locationId, verticalId: node.verticalId, question: paa },
+          select: { id: true },
+        });
+        if (existingPaa) continue;
+        await prisma.topicNode.create({
+          data: {
             companyId: company.id, locationId: node.locationId, verticalId: node.verticalId,
             question: paa, category: node.category, funnelStage: node.funnelStage, source: "paa",
           },
-          update: {},
         });
       }
       probed++;
@@ -199,10 +281,32 @@ export async function analyzeGaps(job: Job) {
     prisma.topicNode.count({ where: { companyId: company.id, status: "unanswered" } }),
   ]);
   const coveragePct = total ? Math.round((strong / total) * 1000) / 10 : 0;
+
+  // competitor visibility block: tenant + top domains by citation share
+  const listedSet = new Set(listedCompetitors);
+  const scoreboard = [...domainPresence.entries()]
+    .map(([domain, s]) => ({
+      domain, organic: s.organic, ai: s.ai,
+      organicRate: probed ? Math.round((s.organic / probed) * 100) : 0,
+      aiRate: probed ? Math.round((s.ai / probed) * 100) : 0,
+      isListed: listedSet.has(domain),
+    }))
+    .sort((a, b) => (b.ai * 2 + b.organic) - (a.ai * 2 + a.organic))
+    .slice(0, 15);
+  const visibility = {
+    probed,
+    tenant: {
+      domain: tenantNorm, organic: tenantOrganic, ai: tenantAi,
+      organicRate: probed ? Math.round((tenantOrganic / probed) * 100) : 0,
+      aiRate: probed ? Math.round((tenantAi / probed) * 100) : 0,
+    },
+    competitors: scoreboard,
+  };
+
   await prisma.visibilitySnapshot.create({
     data: {
       companyId: company.id, locationId: payload.locationId, verticalId: payload.verticalId,
-      summary: { total, strong, weak, unanswered, coveragePct, probed, liveFetchedAt: runStartedAt.toISOString() },
+      summary: { total, strong, weak, unanswered, coveragePct, probed, visibility, liveFetchedAt: runStartedAt.toISOString() },
     },
   });
 

@@ -40,6 +40,7 @@ export async function extractDocument(job: Job) {
 
     // wipe previous extraction of this document (re-upload = re-extract)
     await prisma.testimonial.deleteMany({ where: { documentId: doc.id } });
+    const source = /google|review/i.test(doc.kind) ? "google" : "book";
 
     const CHUNK = 12000;
     let inserted = 0;
@@ -58,7 +59,7 @@ export async function extractDocument(job: Job) {
         if (dup) continue;
         await prisma.testimonial.create({
           data: {
-            companyId: doc.companyId, documentId: doc.id,
+            companyId: doc.companyId, documentId: doc.id, source,
             clientName: t.clientName, industry: t.industry?.toLowerCase() ?? null,
             location: t.location, quote: t.quote, resultClaim: t.resultClaim,
             metrics: t.metrics ?? [], services: (t.services ?? []).map((s) => s.toLowerCase()),

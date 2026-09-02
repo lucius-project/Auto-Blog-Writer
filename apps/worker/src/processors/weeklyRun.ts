@@ -6,6 +6,7 @@ import { getQueue } from "../lib/queues.js";
 import { ingestSite } from "./ingestSite.js";
 import { researchCompany } from "./researchCompany.js";
 import { analyzeGaps } from "./analyzeGaps.js";
+import { analyzeCompetitors } from "./analyzeCompetitors.js";
 import { newsTopicsForCompany } from "../lib/feeds.js";
 import { generateBlog } from "./generateBlog.js";
 
@@ -27,6 +28,11 @@ export async function weeklyRun(job: Job) {
   await ingestSite(asJob({ companyId: company.id, maxPages: 80, force: false }));
   await researchCompany(asJob({ companyId: company.id, force: false }));
   await newsTopicsForCompany(company.id).catch((e) => console.warn(`[weekly-run] feeds: ${e?.message}`));
+  try {
+    await analyzeCompetitors(asJob({ companyId: company.id, maxPagesPerCompetitor: 50 }));
+  } catch (e: any) {
+    console.warn(`[weekly-run] competitor analysis: ${e?.message}`);
+  }
   await analyzeGaps(asJob({ companyId: company.id, liveProbeCount: 12 }));
 
   // Freshness: published answers older than 90 days go stale for refresh
@@ -41,7 +47,7 @@ export async function weeklyRun(job: Job) {
 
   // Drain the topic graph in priority order, within caps
   const candidates = await prisma.topicNode.findMany({
-    where: { companyId: company.id, status: { in: ["unanswered", "answered_weak", "stale"] }, blogPostId: null },
+    where: { companyId: company.id, status: { in: ["unanswered", "answered_weak", "competitor_owned", "stale"] }, blogPostId: null },
     orderBy: [{ score: { sort: "desc", nulls: "last" } }],
     take: settings.weeklyCapTotal * 3,
   });

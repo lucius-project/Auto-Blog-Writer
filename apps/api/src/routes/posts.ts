@@ -188,19 +188,31 @@ export async function postRoutes(app: FastifyInstance) {
     return { ok: true, postId: id };
   });
 
-  // Dashboard: coverage %, latest snapshot, off-page tasks, spend
+  // Dashboard: company, coverage %, KPIs, data freshness, off-page tasks, spend
   app.get("/companies/:companyId/dashboard", async (req) => {
     const { companyId } = req.params as { companyId: string };
-    const [total, strong, weak, unanswered, snapshot, offPage, drafts, published, failed, spend, perPost] = await Promise.all([
+    const [
+      company, total, strong, weak, unanswered, gapsToWrite,
+      snapshot, latestGap, latestCrawl, offPage,
+      drafts, scheduled, published, failed, activeBatch, spend, perPost,
+    ] = await Promise.all([
+      prisma.company.findUnique({ where: { id: companyId }, select: { name: true, url: true, siteAudit: true } }),
       prisma.topicNode.count({ where: { companyId } }),
       prisma.topicNode.count({ where: { companyId, status: "answered_strong" } }),
       prisma.topicNode.count({ where: { companyId, status: "answered_weak" } }),
       prisma.topicNode.count({ where: { companyId, status: "unanswered" } }),
+      prisma.topicNode.count({
+        where: { companyId, blogPostId: null, status: { in: ["unanswered", "answered_weak", "competitor_owned", "stale"] } },
+      }),
       prisma.visibilitySnapshot.findFirst({ where: { companyId }, orderBy: { capturedAt: "desc" } }),
+      prisma.gapAnalysis.findFirst({ where: { companyId, liveFetchedAt: { not: null } }, orderBy: { liveFetchedAt: "desc" }, select: { liveFetchedAt: true } }),
+      prisma.sitePage.findFirst({ where: { companyId, lastCrawledAt: { not: null } }, orderBy: { lastCrawledAt: "desc" }, select: { lastCrawledAt: true } }),
       prisma.offPageTask.findMany({ where: { companyId, status: "open" }, orderBy: { priority: "desc" } }),
       prisma.blogPost.count({ where: { companyId, status: { in: ["draft", "review"] } } }),
+      prisma.blogPost.count({ where: { companyId, status: "approved" } }),
       prisma.blogPost.count({ where: { companyId, status: "published" } }),
       prisma.blogPost.count({ where: { companyId, status: "failed" } }),
+      prisma.batchRun.findFirst({ where: { companyId, state: { in: ["running", "scheduling"] } }, orderBy: { startedAt: "desc" } }),
       prisma.dataFetchLog.aggregate({ where: { companyId }, _sum: { cost: true } }),
       prisma.dataFetchLog.groupBy({
         by: ["blogPostId"],
@@ -208,11 +220,27 @@ export async function postRoutes(app: FastifyInstance) {
         _sum: { cost: true },
       }),
     ]);
+    const writingNow = activeBatch ? Math.max(0, (activeBatch.total ?? 0) - (activeBatch.written ?? 0)) : 0;
+    const audit = (company?.siteAudit ?? null) as { auditedAt?: string } | null;
     return {
+      company: company ? { name: company.name, url: company.url } : null,
       coveragePct: total ? Math.round((strong / total) * 1000) / 10 : 0,
       topics: { total, strong, weak, unanswered },
       latestSnapshot: snapshot?.summary ?? null,
+      freshness: {
+        gapEvidenceAt: latestGap?.liveFetchedAt ?? snapshot?.capturedAt ?? null,
+        siteCrawlAt: latestCrawl?.lastCrawledAt ?? (audit?.auditedAt ? new Date(audit.auditedAt) : null),
+      },
       offPageTasks: offPage,
+      kpis: {
+        gapsToWrite,
+        writingNow,
+        inReview: drafts,
+        scheduled,
+        liveOnSite: published,
+        publishFailures: failed,
+      },
+      // kept for existing callers
       posts: { awaitingReview: drafts, published, failed },
       providerSpend: spend._sum.cost ?? 0,
       articleSpend: {
@@ -372,6 +400,49 @@ export async function managementRoutes(app: FastifyInstance) {
     return { ok: true, settings };
   });
 
+  // ---- Competitors: operator-listed domains we crawl + diff for content gaps ----
+  const normDomain = (raw: string): string => {
+    let d = raw.trim().toLowerCase();
+    d = d.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "");
+    return d;
+  };
+  const CompetitorInput = z.object({ domain: z.string().min(3), label: z.string().max(120).optional() });
+
+  app.get("/companies/:companyId/competitors", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    return prisma.competitor.findMany({ where: { companyId }, orderBy: { createdAt: "asc" } });
+  });
+
+  app.post("/companies/:companyId/competitors", async (req, reply) => {
+    const { companyId } = req.params as { companyId: string };
+    const input = CompetitorInput.parse(req.body ?? {});
+    const domain = normDomain(input.domain);
+    if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) return reply.code(422).send({ error: "invalid domain" });
+    const company = await prisma.company.findUniqueOrThrow({ where: { id: companyId } });
+    if (normDomain(company.url) === domain) return reply.code(422).send({ error: "that is the tenant's own domain" });
+    const existing = await prisma.competitor.findUnique({ where: { companyId_domain: { companyId, domain } } });
+    if (existing) return reply.code(409).send({ error: "already added" });
+    const competitor = await prisma.competitor.create({
+      data: { companyId, domain, label: input.label ?? null, status: "pending" },
+    });
+    return { ok: true, competitor };
+  });
+
+  app.delete("/competitors/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    await prisma.competitor.delete({ where: { id } });
+    return { ok: true };
+  });
+
+  app.post("/companies/:companyId/competitors/analyze", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    const count = await prisma.competitor.count({ where: { companyId } });
+    if (!count) return { ok: false, error: "no competitors listed" };
+    await prisma.competitor.updateMany({ where: { companyId }, data: { status: "pending" } });
+    const job = await getQueue(QUEUES.analyzeCompetitors).add(QUEUES.analyzeCompetitors, { companyId });
+    return { ok: true, jobId: job.id, competitors: count };
+  });
+
   app.get("/companies/:companyId/offpage", async (req) => {
     const { companyId } = req.params as { companyId: string };
     return prisma.offPageTask.findMany({
@@ -423,7 +494,7 @@ export async function actionRoutes(app: FastifyInstance) {
     const { companyId } = req.params as { companyId: string };
     const input = GenerateNextInput.parse(req.body ?? {});
     const nodes = await prisma.topicNode.findMany({
-      where: { companyId, status: { in: ["unanswered", "answered_weak", "stale"] }, blogPostId: null },
+      where: { companyId, status: { in: ["unanswered", "answered_weak", "competitor_owned", "stale"] }, blogPostId: null },
       orderBy: [{ score: { sort: "desc", nulls: "last" } }],
       take: input.count,
     });

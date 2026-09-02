@@ -14,15 +14,9 @@ type Dashboard = {
   offPageTasks: { id: string; source: string; action: string }[];
   providerSpend: number;
 };
-type OctaneStatus = {
-  connected: boolean; savedAt?: string; ageHours?: number;
-  login?: { state: string; detail: string | null; at: string } | null;
-};
-
 export default function Home() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [dash, setDash] = useState<Record<string, Dashboard>>({});
-  const [octane, setOctane] = useState<OctaneStatus | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
 
@@ -33,24 +27,8 @@ export default function Home() {
       fetch(`${API}/api/companies/${c.id}/dashboard`).then((r) => r.json())
         .then((d) => setDash((prev) => ({ ...prev, [c.id]: d })));
     }
-    fetch(`${API}/api/publishers/octane/status`).then((r) => r.json()).then(setOctane);
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, [load]);
-
-  const connectOctane = async () => {
-    const r = await fetch(`${API}/api/publishers/octane/login`, { method: "POST" }).then((r) => r.json());
-    setNotice(r.message ?? "Login window opening…");
-    // poll fast while the login is in progress
-    const t = setInterval(async () => {
-      const st: OctaneStatus = await fetch(`${API}/api/publishers/octane/status`).then((r) => r.json());
-      setOctane(st);
-      if (st.login?.state === "saved" || st.connected) { setNotice("Octane connected — publishing is ready."); clearInterval(t); }
-      else if (st.login?.state === "error") { setNotice(`Octane login failed: ${st.login.detail}`); clearInterval(t); }
-      else if (st.login?.state === "waiting_for_login") setNotice("Login window is open on this computer — complete the Turnstile and sign in.");
-      else if (st.login?.state === "launching") setNotice("Starting the browser window…");
-    }, 3000);
-    setTimeout(() => clearInterval(t), 12 * 60e3);
-  };
 
   const runWeekly = async (companyId: string) => {
     setRunning(companyId);
@@ -64,22 +42,9 @@ export default function Home() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-12">
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Automated Blog Writer</h1>
-          <p className="mt-1 text-gray-500">Answer coverage across every question your buyers ask an AI.</p>
-        </div>
-        <div className="flex items-start gap-2 text-right">
-          {octane?.connected ? (
-            <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700">
-              Octane connected · {octane.ageHours}h ago
-            </span>
-          ) : (
-            <button onClick={connectOctane} className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white">
-              Connect Octane
-            </button>
-          )}
-        </div>
+      <div>
+        <h1 className="text-3xl font-bold">Automated Blog Writer</h1>
+        <p className="mt-1 text-gray-500">Answer coverage across every question your buyers ask an AI.</p>
       </div>
       {notice && (
         <div className="mt-4 rounded-lg bg-blue-50 p-3 text-sm text-blue-900">

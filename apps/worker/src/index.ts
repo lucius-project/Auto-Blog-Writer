@@ -12,6 +12,7 @@ import { octaneKeepalive } from "./processors/octaneKeepalive.js";
 import { writeSchedule } from "./processors/writeSchedule.js";
 import { offpageDraft } from "./processors/offpageDraft.js";
 import { syncAnalytics } from "./processors/syncAnalytics.js";
+import { analyzeCompetitors } from "./processors/analyzeCompetitors.js";
 import { Queue } from "bullmq";
 
 const connection = new IORedis(
@@ -31,6 +32,7 @@ const workers = [
   new Worker(QUEUES.writeSchedule, writeSchedule, { connection, lockDuration: 10 * 60 * 1000 }),
   new Worker(QUEUES.offpageDraft, offpageDraft, { connection }),
   new Worker(QUEUES.syncAnalytics, syncAnalytics, { connection }),
+  new Worker(QUEUES.analyzeCompetitors, analyzeCompetitors, { connection, lockDuration: 15 * 60 * 1000 }),
 ];
 
 for (const w of workers) {

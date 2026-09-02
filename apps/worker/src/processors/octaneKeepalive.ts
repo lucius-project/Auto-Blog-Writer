@@ -13,15 +13,18 @@ import { notify } from "../lib/notify.js";
 export async function octaneKeepalive() {
   const targets = await prisma.publishTarget.findMany({ where: { kind: "custom" } });
   const octane = targets.filter((t) => ((t.config as any) ?? {}).adapter === "octane");
-  // legacy: no targets configured yet -> still check the shared default profile
-  const checks = octane.length
-    ? octane.map((t) => ({
-        targetId: t.id,
-        companyId: t.companyId,
-        name: t.name,
-        profileDir: ((t.config as any).profileDir as string) ?? "secrets/octane-profile",
-      }))
-    : [{ targetId: null as string | null, companyId: null as string | null, name: "default", profileDir: "secrets/octane-profile" }];
+  // No Octane publish targets configured anywhere (e.g. WordPress-only setups) —
+  // nothing to keep alive, and no reason to nag about a session nobody uses.
+  if (octane.length === 0) {
+    console.log("[octane-keepalive] no Octane publish targets — skipping");
+    return { results: [] as { name: string; alive: boolean }[] };
+  }
+  const checks = octane.map((t) => ({
+    targetId: t.id,
+    companyId: t.companyId,
+    name: t.name,
+    profileDir: ((t.config as any).profileDir as string) ?? "secrets/octane-profile",
+  }));
 
   const results: { name: string; alive: boolean }[] = [];
   for (const c of checks) {

@@ -1,22 +1,26 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import NotificationsBell from "./NotificationsBell";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3101";
 
 type Company = { id: string; name: string };
+type Item = { href: string; label: string };
+type Group = { key: string; label: string; items: Item[]; badge?: number };
 
 /**
- * Persistent app shell navigation. Everywhere, always:
- *   brand -> dashboard | company switcher | section tabs for the current
- *   company | notifications | account
+ * Persistent app shell navigation:
+ *   brand -> dashboard | company switcher | grouped section menus
+ *   (Overview / Content / SEO / Growth) | Settings | notifications | account
  */
 export default function TopNav() {
   const path = usePathname();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [reviewCount, setReviewCount] = useState(0);
+  const navRef = useRef<HTMLElement>(null);
 
   // company context from the url: /company/{id}/... or /review/{id}
   const companyId = path.match(/^\/company\/([^/]+)/)?.[1] ?? path.match(/^\/review\/([^/]+)/)?.[1] ?? null;
@@ -33,20 +37,44 @@ export default function TopNav() {
     const t = setInterval(load, 30000);
     return () => clearInterval(t);
   }, [companyId]);
+  // close menus on route change or outside click
+  useEffect(() => { setOpenMenu(null); setPickerOpen(false); }, [path]);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpenMenu(null);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
 
   if (path.startsWith("/login")) return null;
 
-  const tabs = companyId ? [
-    { href: `/company/${companyId}`, label: "Posts" },
-    { href: `/company/${companyId}/calendar`, label: "Calendar" },
-    { href: `/review/${companyId}`, label: reviewCount ? `Review (${reviewCount})` : "Review" },
-    { href: `/company/${companyId}/topics`, label: "Topics" },
-    { href: `/company/${companyId}/trends`, label: "Trends" },
-    { href: `/company/${companyId}/analytics`, label: "Analytics" },
-    { href: `/company/${companyId}/offpage`, label: "Off-page" },
-    { href: `/company/${companyId}/batches`, label: "Batches" },
-    { href: `/company/${companyId}/settings`, label: "Settings" },
+  const overviewHref = companyId ? `/company/${companyId}` : null;
+  const settingsHref = companyId ? `/company/${companyId}/settings` : null;
+  const groups: Group[] = companyId ? [
+    {
+      key: "content", label: "Content", badge: reviewCount, items: [
+        { href: `/review/${companyId}`, label: "Review queue" },
+        { href: `/company/${companyId}/calendar`, label: "Calendar" },
+        { href: `/company/${companyId}/batches`, label: "Batch history" },
+      ],
+    },
+    {
+      key: "seo", label: "SEO", items: [
+        { href: `/company/${companyId}/topics`, label: "Topic Graph" },
+        { href: `/company/${companyId}/offpage`, label: "Off-page tasks" },
+      ],
+    },
+    {
+      key: "growth", label: "Growth", items: [
+        { href: `/company/${companyId}/analytics`, label: "Analytics" },
+        { href: `/company/${companyId}/trends`, label: "Trends" },
+      ],
+    },
   ] : [];
+
+  const pill = (active: boolean) =>
+    `whitespace-nowrap rounded-lg px-2.5 py-1 text-sm font-medium ${active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`;
 
   return (
     <header className="sticky top-0 z-30 border-b bg-white/95 backdrop-blur">
@@ -74,20 +102,51 @@ export default function TopNav() {
           )}
         </div>
 
-        {/* section tabs */}
-        <nav className="flex flex-1 flex-wrap items-center gap-x-0.5 gap-y-1">
-          {tabs.map((t) => {
-            const active = path === t.href;
+        {/* grouped section menus */}
+        <nav ref={navRef} className="flex flex-1 items-center gap-x-1">
+          {overviewHref && (
+            <a href={overviewHref} className={pill(path === overviewHref)}>Overview</a>
+          )}
+          {groups.map((g) => {
+            const active = g.items.some((it) => path === it.href || path.startsWith(it.href + "/"));
+            const isOpen = openMenu === g.key;
             return (
-              <a key={t.href} href={t.href}
-                className={`whitespace-nowrap rounded-lg px-2 py-1 text-sm font-medium ${active ? "bg-gray-900 text-white" : "text-gray-600 hover:bg-gray-100"}`}>
-                {t.label}
-              </a>
+              <div key={g.key} className="relative">
+                <button onClick={() => setOpenMenu(isOpen ? null : g.key)}
+                  className={`flex items-center gap-1 ${pill(active || isOpen)}`}>
+                  {g.label}
+                  {g.badge ? (
+                    <span className={`rounded-full px-1.5 text-[10px] font-bold ${active || isOpen ? "bg-white/25 text-white" : "bg-red-600 text-white"}`}>
+                      {g.badge}
+                    </span>
+                  ) : null}
+                  <span className={active || isOpen ? "text-white/70" : "text-gray-400"}>▾</span>
+                </button>
+                {isOpen && (
+                  <div className="absolute left-0 z-40 mt-1 w-52 rounded-lg border bg-white py-1 shadow-lg">
+                    {g.items.map((it) => {
+                      const itActive = path === it.href || path.startsWith(it.href + "/");
+                      return (
+                        <a key={it.href} href={it.href}
+                          className={`flex items-center justify-between px-3 py-1.5 text-sm hover:bg-gray-50 ${itActive ? "font-semibold text-gray-900" : "text-gray-700"}`}>
+                          {it.label}
+                          {it.href.startsWith("/review/") && reviewCount > 0 && (
+                            <span className="rounded-full bg-red-600 px-1.5 text-[10px] font-bold text-white">{reviewCount}</span>
+                          )}
+                        </a>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             );
           })}
         </nav>
 
         <div className="flex shrink-0 items-center gap-2">
+          {settingsHref && (
+            <a href={settingsHref} className={pill(path === settingsHref)}>Settings</a>
+          )}
           <NotificationsBell />
           <AccountBadge />
         </div>
