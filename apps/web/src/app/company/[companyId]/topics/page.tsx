@@ -45,6 +45,7 @@ export default function Topics({ params }: { params: Promise<{ companyId: string
   const { companyId } = use(params);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [filter, setFilter] = useState<string>("");
+  const [sourceFilter, setSourceFilter] = useState<string>("");
   const [queued, setQueued] = useState<Set<string>>(new Set());
   const write = async (id: string) => {
     await fetch(`${API}/api/topics/${id}/generate`, { method: "POST" });
@@ -55,21 +56,31 @@ export default function Topics({ params }: { params: Promise<{ companyId: string
     setQueued((q) => new Set(q).add(id));
   };
   useEffect(() => {
-    fetch(`${API}/api/companies/${companyId}/topics?take=200${filter ? `&status=${filter}` : ""}`)
+    fetch(`${API}/api/companies/${companyId}/topics?take=1000${filter ? `&status=${filter}` : ""}${sourceFilter ? `&source=${sourceFilter}` : ""}`)
       .then((r) => r.json()).then(setNodes);
-  }, [companyId, filter]);
+  }, [companyId, filter, sourceFilter]);
   return (
     <div>
       <h1 className="text-2xl font-bold">Topic Graph</h1>
       <p className="mt-1 text-sm text-gray-500">Every question your buyers could ask an AI, ranked by value. This is the backlog the weekly loop drains.</p>
       <OwnerAdd companyId={companyId} />
-      <div className="mt-4 flex gap-1">
-        {["", "unanswered", "answered_weak", "answered_strong", "stale"].map((s) => (
+      <div className="mt-4 flex flex-wrap gap-1">
+        {["", "unanswered", "answered_weak", "answered_strong", "competitor_owned", "stale"].map((s) => (
           <button key={s} onClick={() => setFilter(s)}
             className={`rounded-lg px-3 py-1 text-xs font-medium ${filter === s ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600"}`}>
-            {s || "all"}
+            {s ? s.replace("_", " ") : "all"}
           </button>
         ))}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        <span className="mr-1 text-[11px] uppercase text-gray-400">source</span>
+        {[["", "any"], ["taxonomy", "taxonomy"], ["research", "buyer research"], ["competitor", "competitor"], ["paa", "people-also-ask"], ["fanout", "expanded"], ["news", "news"]].map(([s, label]) => (
+          <button key={s} onClick={() => setSourceFilter(s)}
+            className={`rounded-lg px-2.5 py-1 text-xs font-medium ${sourceFilter === s ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600"}`}>
+            {label}
+          </button>
+        ))}
+        <span className="ml-2 text-xs text-gray-400">{nodes.length} shown</span>
       </div>
       <div className="mt-4 space-y-2">
         {nodes.map((n) => (

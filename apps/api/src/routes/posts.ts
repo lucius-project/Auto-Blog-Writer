@@ -254,11 +254,17 @@ export async function postRoutes(app: FastifyInstance) {
   // Top gaps (the ranked backlog view)
   app.get("/companies/:companyId/topics", async (req) => {
     const { companyId } = req.params as { companyId: string };
-    const { status, take } = (req.query ?? {}) as { status?: string; take?: string };
+    const { status, source, take } = (req.query ?? {}) as { status?: string; source?: string; take?: string };
     return prisma.topicNode.findMany({
-      where: { companyId, ...(status ? { status: status as any } : {}) },
-      orderBy: [{ score: { sort: "desc", nulls: "last" } }],
-      take: Math.min(Number(take ?? 50), 200),
+      where: {
+        companyId,
+        ...(status ? { status: status as any } : {}),
+        ...(source ? { source } : {}),
+      },
+      // scored gaps first; among unscored ones show the newest (e.g. freshly
+      // seeded competitor topics) rather than truncating them off the end
+      orderBy: [{ score: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+      take: Math.min(Number(take ?? 50), 2000),
     });
   });
 }

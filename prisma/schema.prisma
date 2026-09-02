@@ -36,6 +36,7 @@ model Company {
   offPageTasks   OffPageTask[]
   analyticsConnection AnalyticsConnection?
   analyticsSnapshots  AnalyticsSnapshot[]
+  searchConsoleSnapshots SearchConsoleSnapshot[]
   competitors    Competitor[]
 
   @@index([url])
@@ -316,12 +317,17 @@ model OffPageTask {
   @@index([companyId, status])
 }
 
-// Per-tenant GA4 property connection. One property per company for now.
+// Per-tenant Google connection: GA4 property + (optional) Search Console site,
+// both authenticated with the same service-account key. One per company.
 model AnalyticsConnection {
   id            String    @id @default(cuid())
   companyId     String    @unique
   provider      String    @default("ga4")
   propertyId    String
+  // Search Console property, e.g. "sc-domain:example.com" or "https://example.com/"
+  gscSiteUrl    String?
+  gscLastSyncedAt DateTime?
+  gscLastSyncError String?
   // { serviceAccountKey: "enc:..." } — encrypted like PublishTarget.config.appPassword
   config        Json
   lastSyncedAt  DateTime?
@@ -330,6 +336,23 @@ model AnalyticsConnection {
   updatedAt     DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// Rolling Search Console snapshot: query/page performance + position over time.
+// A point is written on every sync so ranking movement is tracked historically.
+model SearchConsoleSnapshot {
+  id         String   @id @default(cuid())
+  companyId  String
+  capturedAt DateTime @default(now())
+  rangeDays  Int
+  // { totals:{clicks,impressions,ctr,position}, trend:[{date,clicks,impressions,position}],
+  //   topQueries:[{query,clicks,impressions,ctr,position}], topPages:[{page,blogPostId,title,...}] }
+  summary       Json
+  liveFetchedAt DateTime
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, capturedAt])
 }
 
 // Rolling-window GA4 report snapshot (trend + per-post leaderboard).

@@ -99,11 +99,17 @@ export async function seedCompetitorTopics(companyId: string): Promise<number> {
         select: { id: true },
       });
       if (exists) continue;
+      // give a provisional score so the topic ranks in backlog views right away
+      // (a real gap check refines it with live evidence). Competitor-sourced =
+      // a rival already covers this, so start it mid-high.
+      const stageW: Record<string, number> = { decision: 1, compliance: 0.95, consideration: 0.85, awareness: 0.6 };
+      const provisionalScore = 45 * (stageW[t.funnelStage] ?? 0.8);
       await prisma.topicNode.create({
         data: {
           companyId: company.id, locationId: null, verticalId,
           question: t.question, category: t.category || "service",
           funnelStage: t.funnelStage || "consideration", source: "competitor",
+          score: provisionalScore, scoreParts: { provisional: true, from: "competitor" } as any,
           evidence: attributed.length ? { competitorDomains: attributed } : undefined,
         },
       });

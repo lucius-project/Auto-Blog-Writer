@@ -3,7 +3,7 @@ import { z } from "zod";
 import { QUEUES } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { getQueue } from "../lib/queues.js";
-import { encryptSecret } from "../lib/secrets.js";
+import { encryptSecret, decryptSecret } from "../lib/secrets.js";
 
 /**
  * GA4 analytics: connect a property (service-account auth), read the latest
@@ -15,12 +15,89 @@ export async function analyticsRoutes(app: FastifyInstance) {
   app.get("/companies/:companyId/analytics", async (req) => {
     const { companyId } = req.params as { companyId: string };
     const connection = await prisma.analyticsConnection.findUnique({ where: { companyId } });
-    if (!connection) return { connected: false };
-    const snapshot = await prisma.analyticsSnapshot.findFirst({
-      where: { companyId },
-      orderBy: { capturedAt: "desc" },
-    });
+    if (!connection) return { connected: false, search: { connected: false } };
+    const [snapshot, gscSnaps, pubPosts] = await Promise.all([
+      prisma.analyticsSnapshot.findFirst({ where: { companyId }, orderBy: { capturedAt: "desc" } }),
+      prisma.searchConsoleSnapshot.findMany({ where: { companyId }, orderBy: { capturedAt: "desc" }, take: 26 }),
+      prisma.blogPost.findMany({ where: { companyId, publishedUrl: { not: null } }, select: { id: true, title: true, publishedUrl: true } }),
+    ]);
     const summary = (snapshot?.summary as any) ?? null;
+
+    // path -> published blog post, for attaching an action to each GSC page
+    const postByPath = new Map<string, { id: string; title: string }>();
+    for (const p of pubPosts) { try { postByPath.set(new URL(p.publishedUrl!).pathname, { id: p.id, title: p.title }); } catch { /* skip */ } }
+    const pageInfo = (url: string) => {
+      try { const path = new URL(url).pathname; return { path, ...(postByPath.get(path) ?? { id: null as string | null, title: null as string | null }) }; }
+      catch { return { path: url, id: null, title: null }; }
+    };
+
+    // Search Console block
+    const latestGsc = (gscSnaps[0]?.summary as any) ?? null;
+    const queries = (latestGsc?.topQueries ?? []) as any[];
+    const queryPages = (latestGsc?.queryPages ?? []) as any[];
+    const movers = [...queries].filter((q) => q.positionDelta != null && Math.abs(q.positionDelta) >= 0.8);
+
+    // ---- Ranking opportunities (actionable buckets) ----
+    // rough organic CTR-by-position benchmark
+    const expectedCtr = (pos: number) =>
+      pos <= 1 ? 0.28 : pos <= 2 ? 0.15 : pos <= 3 ? 0.10 : pos <= 4 ? 0.075 : pos <= 5 ? 0.06 : pos <= 7 ? 0.04 : pos <= 10 ? 0.025 : 0.012;
+    const bestPageForQuery = new Map<string, any>();
+    for (const r of queryPages) {
+      const cur = bestPageForQuery.get(r.query);
+      if (!cur || r.impressions > cur.impressions) bestPageForQuery.set(r.query, r);
+    }
+    // (a) CTR fixes: rank well, far below expected clicks -> rewrite title/meta
+    const ctrByPage = new Map<string, { page: string; queries: string[]; impressions: number; clicks: number; position: number }>();
+    for (const r of queryPages) {
+      if (r.position > 8 || r.impressions < 15) continue;
+      if (r.ctr >= expectedCtr(r.position) * 0.45) continue;
+      const e = ctrByPage.get(r.page) ?? { page: r.page, queries: [] as string[], impressions: 0, clicks: 0, position: 0 };
+      e.queries.push(r.query);
+      e.impressions += r.impressions;
+      e.clicks += r.clicks;
+      e.position = e.position ? Math.min(e.position, r.position) : r.position;
+      ctrByPage.set(r.page, e);
+    }
+    const ctrFixes = [...ctrByPage.values()]
+      .sort((a, b) => b.impressions - a.impressions).slice(0, 12)
+      .map((e) => ({ ...e, queries: e.queries.slice(0, 5), missedClicks: Math.round(e.impressions * expectedCtr(e.position) - e.clicks), ...pageInfo(e.page) }));
+    // (b) striking distance: pos 8-20, one page away from page 1
+    const strikingDistance = queries
+      .filter((q) => q.position >= 8 && q.position <= 20)
+      .sort((a, b) => b.impressions - a.impressions).slice(0, 15)
+      .map((q) => ({ query: q.query, position: q.position, impressions: q.impressions, clicks: q.clicks, positionDelta: q.positionDelta, losing: q.positionDelta != null && q.positionDelta < -1, ...pageInfo(bestPageForQuery.get(q.query)?.page ?? "") }));
+    // (c) collapses: dropped hard, still has demand
+    const drops = queries
+      .filter((q) => q.positionDelta != null && q.positionDelta <= -8 && q.impressions >= 5)
+      .sort((a, b) => a.positionDelta - b.positionDelta).slice(0, 12)
+      .map((q) => ({ query: q.query, position: q.position, impressions: q.impressions, positionDelta: q.positionDelta, ...pageInfo(bestPageForQuery.get(q.query)?.page ?? "") }));
+    let serviceAccountEmail: string | null = null;
+    try { serviceAccountEmail = JSON.parse(decryptSecret(String((connection.config as any)?.serviceAccountKey ?? ""))).client_email ?? null; } catch { /* ignore */ }
+    const search = connection.gscSiteUrl ? {
+      connected: true,
+      siteUrl: connection.gscSiteUrl,
+      serviceAccountEmail,
+      lastSyncedAt: connection.gscLastSyncedAt,
+      lastSyncError: connection.gscLastSyncError,
+      liveFetchedAt: gscSnaps[0]?.liveFetchedAt ?? null,
+      totals: latestGsc?.totals ?? null,
+      prevTotals: latestGsc?.prevTotals ?? null,
+      // 90-day daily position/click trend from the newest snapshot
+      dailyTrend: latestGsc?.trend ?? [],
+      // avg position at each sync, oldest -> newest (longer-horizon view)
+      positionHistory: [...gscSnaps].reverse().map((s) => ({
+        at: s.capturedAt,
+        position: (s.summary as any)?.totals?.position ?? null,
+        clicks: (s.summary as any)?.totals?.clicks ?? null,
+        impressions: (s.summary as any)?.totals?.impressions ?? null,
+      })),
+      topQueries: queries.slice(0, 50),
+      improved: movers.filter((q) => q.positionDelta > 0).sort((a, b) => b.positionDelta - a.positionDelta).slice(0, 10),
+      declined: movers.filter((q) => q.positionDelta < 0).sort((a, b) => a.positionDelta - b.positionDelta).slice(0, 10),
+      topPages: latestGsc?.topPages ?? [],
+      opportunities: latestGsc ? { ctrFixes, strikingDistance, drops } : null,
+    } : { connected: false, serviceAccountEmail };
+
     return {
       connected: true,
       propertyId: connection.propertyId,
@@ -30,7 +107,32 @@ export async function analyticsRoutes(app: FastifyInstance) {
       trend: summary?.trend ?? [],
       topPages: summary?.topPages ?? [],
       liveFetchedAt: snapshot?.liveFetchedAt ?? null,
+      search,
     };
+  });
+
+  // Connect / update the Search Console property (reuses the GA4 service-account key)
+  const GscInput = z.object({ siteUrl: z.string().min(4) });
+  app.post("/companies/:companyId/analytics/gsc", async (req, reply) => {
+    const { companyId } = req.params as { companyId: string };
+    const { siteUrl } = GscInput.parse(req.body);
+    const connection = await prisma.analyticsConnection.findUnique({ where: { companyId } });
+    if (!connection) return reply.code(400).send({ error: "connect GA4 first — Search Console reuses the same service-account key" });
+    // accept "sc-domain:example.com" or a full "https://example.com/" URL
+    const normalized = /^sc-domain:/.test(siteUrl) ? siteUrl : (siteUrl.startsWith("http") ? siteUrl : `sc-domain:${siteUrl.replace(/^www\./, "")}`);
+    await prisma.analyticsConnection.update({
+      where: { companyId }, data: { gscSiteUrl: normalized, gscLastSyncError: null },
+    });
+    await getQueue(QUEUES.syncAnalytics).add(QUEUES.syncAnalytics, { companyId });
+    return reply.code(201).send({ ok: true, siteUrl: normalized });
+  });
+
+  app.delete("/companies/:companyId/analytics/gsc", async (req) => {
+    const { companyId } = req.params as { companyId: string };
+    await prisma.analyticsConnection.updateMany({
+      where: { companyId }, data: { gscSiteUrl: null, gscLastSyncedAt: null, gscLastSyncError: null },
+    });
+    return { ok: true };
   });
 
   /**

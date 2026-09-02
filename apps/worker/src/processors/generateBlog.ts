@@ -218,7 +218,10 @@ function buildJsonLd(d: DraftJson, company: { name: string; url: string }, locat
       dateModified: new Date().toISOString().slice(0, 10),
       author: { "@type": "Organization", name: company.name, url: origin },
       publisher: { "@type": "Organization", name: company.name, url: origin },
-      mainEntityOfPage: { "@type": "WebPage", "@id": `${origin}/blog/${d.slug}` },
+      // best-effort until publish; the publisher rewrites this to the real
+      // permalink the CMS returns (structures vary: /blog/, /YYYY/MM/DD/, bare)
+      url: `${origin}/${d.slug}`,
+      mainEntityOfPage: { "@type": "WebPage", "@id": `${origin}/${d.slug}` },
     },
     {
       "@type": "FAQPage",

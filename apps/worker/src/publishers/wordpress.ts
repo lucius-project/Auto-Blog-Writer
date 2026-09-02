@@ -38,19 +38,59 @@ async function wpUploadMedia(baseUrl: string, auth: string, a: PublishArticle): 
   }
 }
 
+/**
+ * Point the Article/BlogPosting node's canonical fields at the real permalink
+ * the CMS just gave us. At generation time we only have a best-effort guess
+ * (permalink structures vary: /blog/, /YYYY/MM/DD/, bare slug), so the mismatch
+ * is fixed here once the true URL is known.
+ */
+function withCanonicalUrl(jsonLd: unknown, liveUrl: string): unknown {
+  if (!jsonLd || typeof jsonLd !== "object" || !liveUrl) return jsonLd;
+  const clone = JSON.parse(JSON.stringify(jsonLd));
+  const nodes: any[] = Array.isArray(clone["@graph"]) ? clone["@graph"] : [clone];
+  for (const n of nodes) {
+    const types = Array.isArray(n?.["@type"]) ? n["@type"] : [n?.["@type"]];
+    if (types.some((t: string) => t === "BlogPosting" || t === "Article" || t === "NewsArticle")) {
+      n.url = liveUrl;
+      n.mainEntityOfPage = { "@type": "WebPage", "@id": liveUrl };
+    }
+  }
+  return clone;
+}
+
+const ldScript = (jsonLd: unknown, bodyHtml: string) =>
+  `<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>\n${bodyHtml}`;
+
 export function wordpressPublisher(config: {
   baseUrl: string; username: string; appPassword: string; defaultCategoryId?: number;
 }): Publisher {
+  const base = config.baseUrl.replace(/\/$/, "");
+  const auth = "Basic " + Buffer.from(`${config.username}:${config.appPassword}`).toString("base64");
+
+  /** Re-save the post's content with JSON-LD pointing at the real permalink. */
+  const fixCanonical = async (postId: string | number, a: PublishArticle, liveUrl: string) => {
+    if (!a.jsonLd || !Object.keys(a.jsonLd as object).length || !liveUrl) return;
+    try {
+      const r = await fetch(`${base}/wp-json/wp/v2/posts/${postId}`, {
+        method: "POST",
+        headers: { Authorization: auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ content: ldScript(withCanonicalUrl(a.jsonLd, liveUrl), a.bodyHtml) }),
+      });
+      if (!r.ok) console.warn(`[wordpress publisher] JSON-LD canonical fixup ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    } catch (e: any) {
+      console.warn(`[wordpress publisher] JSON-LD canonical fixup threw: ${e?.message}`);
+    }
+  };
+
   return {
     kind: "wordpress",
     async publish(a: PublishArticle): Promise<PublishResult> {
-      const auth = "Basic " + Buffer.from(`${config.username}:${config.appPassword}`).toString("base64");
-      const mediaId = await wpUploadMedia(config.baseUrl, auth, a);
+      const mediaId = await wpUploadMedia(base, auth, a);
       const schedule = a.scheduledFor && new Date(a.scheduledFor) > new Date();
       const body = {
         title: a.title,
         slug: a.slug,
-        content: `<script type="application/ld+json">${JSON.stringify(a.jsonLd)}</script>\n${a.bodyHtml}`,
+        content: ldScript(a.jsonLd, a.bodyHtml),
         excerpt: a.metaDescription,
         status: schedule ? "future" : "publish",
         // past scheduledFor = backfill: publish now carrying the past date
@@ -58,24 +98,24 @@ export function wordpressPublisher(config: {
         ...(config.defaultCategoryId ? { categories: [config.defaultCategoryId] } : {}),
         ...(mediaId ? { featured_media: mediaId } : {}),
       };
-      const res = await fetch(`${config.baseUrl.replace(/\/$/, "")}/wp-json/wp/v2/posts`, {
+      const res = await fetch(`${base}/wp-json/wp/v2/posts`, {
         method: "POST",
         headers: { Authorization: auth, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
       if (!res.ok) return { ok: false, detail: `wordpress ${res.status}: ${(await res.text()).slice(0, 300)}` };
       const data = (await res.json()) as any;
+      await fixCanonical(data.id, a, data.link);
       return { ok: true, liveUrl: data.link, externalId: String(data.id) };
     },
     async update(externalId: string, a: PublishArticle): Promise<PublishResult> {
-      const auth = "Basic " + Buffer.from(`${config.username}:${config.appPassword}`).toString("base64");
       const schedule = a.scheduledFor && new Date(a.scheduledFor) > new Date();
-      const res = await fetch(`${config.baseUrl.replace(/\/$/, "")}/wp-json/wp/v2/posts/${externalId}`, {
+      const res = await fetch(`${base}/wp-json/wp/v2/posts/${externalId}`, {
         method: "POST",
         headers: { Authorization: auth, "Content-Type": "application/json" },
         body: JSON.stringify({
           title: a.title,
-          content: `<script type="application/ld+json">${JSON.stringify(a.jsonLd)}</script>\n${a.bodyHtml}`,
+          content: ldScript(a.jsonLd, a.bodyHtml),
           excerpt: a.metaDescription,
           status: schedule ? "future" : "publish",
           ...(a.scheduledFor ? { date: a.scheduledFor } : {}),
@@ -83,6 +123,7 @@ export function wordpressPublisher(config: {
       });
       if (!res.ok) return { ok: false, detail: `wordpress update ${res.status}: ${(await res.text()).slice(0, 300)}` };
       const data = (await res.json()) as any;
+      await fixCanonical(externalId, a, data.link);
       return { ok: true, liveUrl: data.link, externalId: String(data.id) };
     },
   };
