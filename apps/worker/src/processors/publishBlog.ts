@@ -31,6 +31,27 @@ export async function verifyLive(url: string, title: string): Promise<boolean> {
   } catch { return false; }
 }
 
+type PreviewImage = { filePath: string; alt: string; width: number; height: number };
+
+/** The post's cartoon on disk — generated (and recorded in seo.cartoon) on first call. Throws on failure. */
+export async function ensureCartoon(post: { id: string; companyId: string; title: string; verticalId: string | null; seo: unknown }): Promise<PreviewImage> {
+  const seo = (post.seo ?? {}) as any;
+  const imgDir = path.resolve("data/images");
+  mkdirSync(imgDir, { recursive: true });
+  const imgPath = path.join(imgDir, `${post.id}.jpg`);
+  if (existsSync(imgPath) && seo.cartoon?.width) {
+    return { filePath: imgPath, alt: seo.cartoon.alt ?? `Cartoon: ${post.title}`, width: seo.cartoon.width, height: seo.cartoon.height };
+  }
+  const vertical = post.verticalId ? await prisma.vertical.findUnique({ where: { id: post.verticalId } }) : null;
+  const img = await generateCartoon({ companyId: post.companyId, title: post.title, vertical: vertical?.name, blogPostId: post.id });
+  writeFileSync(imgPath, img.buffer);
+  await prisma.blogPost.update({
+    where: { id: post.id },
+    data: { seo: { ...seo, cartoon: { alt: img.alt, width: img.width, height: img.height, gag: img.gag } } },
+  });
+  return { filePath: imgPath, alt: img.alt, width: img.width, height: img.height };
+}
+
 /**
  * Stage 5 — Publishing. Only `approved` posts publish. Pushes through the
  * tenant's PublishTarget adapter, then verifies the page is actually live
@@ -57,23 +78,9 @@ export async function publishBlog(job: Job) {
   const seo = (post.seo ?? {}) as any;
 
   // every article gets a funny cartoon (generated once, reused on retries)
-  let previewImage: { filePath: string; alt: string; width: number; height: number } | null = null;
+  let previewImage: PreviewImage | null = null;
   try {
-    const imgDir = path.resolve("data/images");
-    mkdirSync(imgDir, { recursive: true });
-    const imgPath = path.join(imgDir, `${post.id}.jpg`);
-    if (existsSync(imgPath) && seo.cartoon?.width) {
-      previewImage = { filePath: imgPath, alt: seo.cartoon.alt ?? `Cartoon: ${post.title}`, width: seo.cartoon.width, height: seo.cartoon.height };
-    } else {
-      const vertical = post.verticalId ? await prisma.vertical.findUnique({ where: { id: post.verticalId } }) : null;
-      const img = await generateCartoon({ companyId: post.companyId, title: post.title, vertical: vertical?.name, blogPostId: post.id });
-      writeFileSync(imgPath, img.buffer);
-      previewImage = { filePath: imgPath, alt: img.alt, width: img.width, height: img.height };
-      await prisma.blogPost.update({
-        where: { id: post.id },
-        data: { seo: { ...seo, cartoon: { alt: img.alt, width: img.width, height: img.height, gag: img.gag } } },
-      });
-    }
+    previewImage = await ensureCartoon(post);
   } catch (e: any) {
     console.warn(`[publish-blog] cartoon generation failed (publishing without image): ${e?.message}`);
   }

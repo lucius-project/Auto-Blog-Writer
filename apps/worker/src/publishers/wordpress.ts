@@ -7,7 +7,7 @@ import type { Publisher, PublishArticle, PublishResult } from "./types.js";
  * of content inside a script tag (works on any theme; swap for a head
  * injection plugin like Rank Math when the tenant has one).
  */
-async function wpUploadMedia(baseUrl: string, auth: string, a: PublishArticle): Promise<number | null> {
+async function wpUploadMedia(baseUrl: string, auth: string, a: Pick<PublishArticle, "slug" | "previewImage">): Promise<number | null> {
   if (!a.previewImage) return null;
   try {
     const { readFileSync } = await import("node:fs");
@@ -142,6 +142,17 @@ export function wordpressPublisher(config: {
       const liveUrl = permalinkOf(data);
       await fixCanonical(externalId, a, liveUrl);
       return { ok: true, liveUrl, externalId: String(data.id) };
+    },
+    async setFeaturedImage(externalId: string, a: Pick<PublishArticle, "slug" | "previewImage">) {
+      const mediaId = await wpUploadMedia(base, auth, a);
+      if (!mediaId) return { ok: false, detail: "media upload failed" };
+      const res = await fetch(`${base}/wp-json/wp/v2/posts/${externalId}`, {
+        method: "POST",
+        headers: { Authorization: auth, "Content-Type": "application/json" },
+        body: JSON.stringify({ featured_media: mediaId }),
+      });
+      if (!res.ok) return { ok: false, detail: `wordpress featured_media ${res.status}: ${(await res.text()).slice(0, 300)}` };
+      return { ok: true, externalId, mediaId };
     },
     async resolveLive(externalId: string, a: PublishArticle): Promise<PublishResult & { live: boolean }> {
       const res = await fetch(`${base}/wp-json/wp/v2/posts/${externalId}?context=edit`, { headers: { Authorization: auth } });
