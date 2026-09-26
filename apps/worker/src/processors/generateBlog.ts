@@ -3,7 +3,7 @@ import { GenerateBlogPayload } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
 import { runQaGates, fitMetaDescription } from "../lib/qa.js";
-import { relevantTestimonials, markTestimonialsUsed } from "../lib/retrieval.js";
+import { relevantTestimonials, markTestimonialsUsed, mentionsClient } from "../lib/retrieval.js";
 import { countryName } from "../lib/taxonomy.js";
 
 interface DraftJson {
@@ -63,10 +63,10 @@ ${pricing.map((r) => `- ${r.service}: $${r.low}–$${r.high} ${r.unit}${r.notes 
     : "";
 
   const testimonials = await relevantTestimonials(company.id, {
-    question: node.question, category: node.category, verticalName: vertical?.name, take: 5,
+    question: node.question, category: node.category, verticalName: vertical?.name, take: 2,
   });
   const testimonialBlock = testimonials.length
-    ? `REAL CLIENT TESTIMONIALS & EXAMPLES (from the company's own client testimonials / Google reviews — quote or paraphrase ACCURATELY, use for the real-example section and social proof; these are DIFFERENT clients — pick the ONE that best fits this article's topic and location, don't default to the first; anonymize client names to first name + industry if the full name feels sensitive; only claim a client's city if it is given below; NEVER alter numbers):
+    ? `REAL CLIENT TESTIMONIALS & EXAMPLES (from the company's own client testimonials / Google reviews — quote or paraphrase ACCURATELY, use for the real-example section and social proof; testimonials rotate across the whole client list so articles don't all cite the same client — use testimonial [1] as this article's real-world example (a relevant [2] may be added as brief extra social proof; if a client's industry differs from this article's, attribute them honestly, e.g. "a retail client", rather than recasting them); anonymize client names to first name + industry if the full name feels sensitive; only claim a client's city if it is given below; NEVER alter numbers):
 ${testimonials.map((t, i) => `[${i + 1}] ${t.clientName ?? "Client"}${t.industry ? ` (${t.industry})` : ""}${t.location ? `, ${t.location}` : ""}: "${t.quote.slice(0, 500)}"${t.resultClaim ? ` — Result: ${t.resultClaim}` : ""}${(t.metrics as string[]).length ? ` — Metrics: ${(t.metrics as string[]).join("; ")}` : ""}`).join("\n")}`
     : "";
 
@@ -95,7 +95,7 @@ EXISTING SITE PAGES (for internal links — use these exact paths): ${sitePages.
 - Voice: ${profile.brandVoice ?? "plain, confident, no jargon"}. No fluff phrases ("in today's fast-paced world", "it's important to note", "in conclusion"), no hedging filler, varied sentence length.
 - 1300-2000 words. Word count is an output of substance, not a target to pad.
 - If a location is given, localize genuinely (local market/regulatory specifics), never just city-name insertion.
-${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the provided REAL CLIENT TESTIMONIALS as a real-world example — either a short quoted excerpt with attribution (first name + industry, e.g. 'Sarah, a Salt Lake City dental practice') inside the most relevant section, or an accurately retold example paragraph. Keep quotes verbatim; never alter their facts or numbers.` : ""}`;
+${testimonials.length ? `- MANDATORY: weave in REAL CLIENT TESTIMONIAL [1] as the real-world example (optionally [2] as brief extra social proof) — either a short quoted excerpt with attribution (first name + industry, e.g. 'Sarah, a Salt Lake City dental practice') inside the most relevant section, or an accurately retold example paragraph. Keep quotes verbatim; never alter their facts or numbers.` : ""}`;
 
   await step("drafting");
   const draft = await chatJson<DraftJson>([
@@ -111,11 +111,11 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
   ], { companyId: company.id, tag: "generate-critique", maxTokens: 16000, temperature: 0.2, blogPostId: refreshPost?.id, runRef: costRef });
 
   const usedTestimonialIds = (bodyHtml: string): string[] => {
-    const body = bodyHtml.replace(/<[^>]+>/g, " ").toLowerCase();
+    const text = bodyHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+    const body = text.toLowerCase();
     return testimonials.filter((t) => {
-      const name = (t.clientName ?? "").split(" ")[0]?.toLowerCase();
       const frag = t.quote.toLowerCase().replace(/\s+/g, " ").slice(10, 48);
-      return (name && name.length > 2 && body.includes(name)) || (frag.length > 20 && body.includes(frag));
+      return mentionsClient(text, t.clientName) || (frag.length > 20 && body.includes(frag));
     }).map((t) => t.id);
   };
   const testimonialUsed = (bodyHtml: string): boolean =>
