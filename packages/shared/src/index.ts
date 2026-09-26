@@ -21,6 +21,7 @@ export const QUEUES = {
   offpageDraft: "offpage-draft",
   syncAnalytics: "sync-analytics",
   analyzeCompetitors: "analyze-competitors",
+  verifyPublished: "verify-published",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -128,6 +129,16 @@ export const AnalyzeCompetitorsPayload = z.object({
 });
 export type AnalyzeCompetitorsPayload = z.infer<typeof AnalyzeCompetitorsPayload>;
 
+/**
+ * Sweep scheduled posts whose go-live time has passed: swap the CMS's
+ * placeholder URL for the real permalink, fix the canonical, verify it's live.
+ */
+export const VerifyPublishedPayload = z.object({
+  /** omit = every company */
+  companyId: z.string().optional(),
+});
+export type VerifyPublishedPayload = z.infer<typeof VerifyPublishedPayload>;
+
 export const JOB_PAYLOADS = {
   [QUEUES.ingestSite]: IngestSitePayload,
   [QUEUES.researchCompany]: ResearchCompanyPayload,
@@ -140,6 +151,7 @@ export const JOB_PAYLOADS = {
   [QUEUES.offpageDraft]: OffpageDraftPayload,
   [QUEUES.syncAnalytics]: SyncAnalyticsPayload,
   [QUEUES.analyzeCompetitors]: AnalyzeCompetitorsPayload,
+  [QUEUES.verifyPublished]: VerifyPublishedPayload,
 } as const;
 
 // ---------------------------------------------------------------------------

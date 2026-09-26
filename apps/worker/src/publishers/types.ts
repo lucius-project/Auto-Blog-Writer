@@ -24,4 +24,6 @@ export interface Publisher {
   publish(article: PublishArticle): Promise<PublishResult>;
   /** Update an existing CMS page in place (rewrites). Optional per adapter. */
   update?(externalId: string, article: PublishArticle): Promise<PublishResult>;
+  /** Fetch a pushed post's current state; once live, returns its real URL (and fixes its canonical). */
+  resolveLive?(externalId: string, article: PublishArticle): Promise<PublishResult & { live: boolean }>;
 }

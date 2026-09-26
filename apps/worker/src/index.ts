@@ -13,6 +13,7 @@ import { writeSchedule } from "./processors/writeSchedule.js";
 import { offpageDraft } from "./processors/offpageDraft.js";
 import { syncAnalytics } from "./processors/syncAnalytics.js";
 import { analyzeCompetitors } from "./processors/analyzeCompetitors.js";
+import { verifyPublished } from "./processors/verifyPublished.js";
 import { Queue } from "bullmq";
 
 const connection = new IORedis(
@@ -33,6 +34,7 @@ const workers = [
   new Worker(QUEUES.offpageDraft, offpageDraft, { connection }),
   new Worker(QUEUES.syncAnalytics, syncAnalytics, { connection }),
   new Worker(QUEUES.analyzeCompetitors, analyzeCompetitors, { connection, lockDuration: 15 * 60 * 1000 }),
+  new Worker(QUEUES.verifyPublished, verifyPublished, { connection, lockDuration: 10 * 60 * 1000 }),
 ];
 
 for (const w of workers) {
@@ -46,6 +48,11 @@ for (const w of workers) {
 const keepaliveQueue = new Queue("octane-keepalive", { connection });
 keepaliveQueue.upsertJobScheduler("octane-keepalive-daily", { pattern: "0 7 * * *", tz: "America/Denver" }, { name: "octane-keepalive", data: {} })
   .catch((e) => console.warn("keepalive scheduler:", e?.message));
+
+// hourly: confirm scheduled posts went live and record their real URLs
+const verifyQueue = new Queue(QUEUES.verifyPublished, { connection });
+verifyQueue.upsertJobScheduler("verify-published-hourly", { pattern: "5 * * * *", tz: "America/Denver" }, { name: QUEUES.verifyPublished, data: {} })
+  .catch((e) => console.warn("verify-published scheduler:", e?.message));
 
 console.log(`abw-worker listening on queues: ${workers.map((w) => w.name).join(", ")}`);
 

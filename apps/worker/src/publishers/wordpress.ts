@@ -58,6 +58,21 @@ function withCanonicalUrl(jsonLd: unknown, liveUrl: string): unknown {
   return clone;
 }
 
+/**
+ * The post's real permalink. For a scheduled (status=future) post WordPress
+ * returns `link` as the placeholder `/?p=<id>`, which 404s until go-live and
+ * has pathname "/" — so build the eventual permalink from the edit-context
+ * `permalink_template` + `generated_slug` instead.
+ */
+function permalinkOf(data: any): string {
+  const link: string = data?.link ?? "";
+  if (!/[?&]p=\d+/.test(link)) return link;
+  const template: string | undefined = data?.permalink_template;
+  const slug: string | undefined = data?.generated_slug || data?.slug;
+  if (!template || !slug || !/%(postname|pagename)%/.test(template)) return link;
+  return template.replace(/%(postname|pagename)%/, slug);
+}
+
 const ldScript = (jsonLd: unknown, bodyHtml: string) =>
   `<script type="application/ld+json">${JSON.stringify(jsonLd)}</script>\n${bodyHtml}`;
 
@@ -105,8 +120,9 @@ export function wordpressPublisher(config: {
       });
       if (!res.ok) return { ok: false, detail: `wordpress ${res.status}: ${(await res.text()).slice(0, 300)}` };
       const data = (await res.json()) as any;
-      await fixCanonical(data.id, a, data.link);
-      return { ok: true, liveUrl: data.link, externalId: String(data.id) };
+      const liveUrl = permalinkOf(data);
+      await fixCanonical(data.id, a, liveUrl);
+      return { ok: true, liveUrl, externalId: String(data.id) };
     },
     async update(externalId: string, a: PublishArticle): Promise<PublishResult> {
       const schedule = a.scheduledFor && new Date(a.scheduledFor) > new Date();
@@ -123,8 +139,17 @@ export function wordpressPublisher(config: {
       });
       if (!res.ok) return { ok: false, detail: `wordpress update ${res.status}: ${(await res.text()).slice(0, 300)}` };
       const data = (await res.json()) as any;
+      const liveUrl = permalinkOf(data);
+      await fixCanonical(externalId, a, liveUrl);
+      return { ok: true, liveUrl, externalId: String(data.id) };
+    },
+    async resolveLive(externalId: string, a: PublishArticle): Promise<PublishResult & { live: boolean }> {
+      const res = await fetch(`${base}/wp-json/wp/v2/posts/${externalId}?context=edit`, { headers: { Authorization: auth } });
+      if (!res.ok) return { ok: false, live: false, detail: `wordpress get ${res.status}: ${(await res.text()).slice(0, 300)}` };
+      const data = (await res.json()) as any;
+      if (data.status !== "publish") return { ok: true, live: false, externalId, detail: `status=${data.status}` };
       await fixCanonical(externalId, a, data.link);
-      return { ok: true, liveUrl: data.link, externalId: String(data.id) };
+      return { ok: true, live: true, liveUrl: data.link, externalId };
     },
   };
 }

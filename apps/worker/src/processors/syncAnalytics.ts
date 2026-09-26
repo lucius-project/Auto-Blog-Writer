@@ -40,7 +40,9 @@ export async function syncAnalytics(job: Job) {
   const byPath = new Map<string, { id: string; title: string }>();
   for (const p of posts) {
     try {
-      byPath.set(new URL(p.publishedUrl!).pathname, { id: p.id, title: p.title });
+      const path = new URL(p.publishedUrl!).pathname;
+      // a CMS placeholder like /?p=123 would claim the homepage's traffic
+      if (path !== "/") byPath.set(path, { id: p.id, title: p.title });
     } catch { /* malformed publishedUrl — skip */ }
   }
 

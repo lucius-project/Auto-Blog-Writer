@@ -11,6 +11,26 @@ import { generateCartoon } from "../lib/imagegen.js";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
+export function publisherFor(target: { kind: string; config: unknown }): Publisher {
+  const cfg = target.config as any;
+  if (target.kind === "custom" && cfg.adapter === "octane") {
+    return octanePublisher({ profileDir: cfg.profileDir ?? "secrets/octane-profile" });
+  }
+  if (target.kind === "wordpress") {
+    return wordpressPublisher({ ...cfg, appPassword: decryptSecret(String(cfg.appPassword ?? "")) });
+  }
+  throw new Error(`no adapter for publish target kind=${target.kind} adapter=${cfg.adapter ?? "?"}`);
+}
+
+/** True when the URL serves the post (200, not bounced to the homepage, title present). */
+export async function verifyLive(url: string, title: string): Promise<boolean> {
+  try {
+    const res = await fetchText(url);
+    const stillThere = new URL(res.finalUrl).pathname.length > 1; // homepage redirect = not live
+    return res.status === 200 && stillThere && res.text.includes(title.slice(0, 40));
+  } catch { return false; }
+}
+
 /**
  * Stage 5 — Publishing. Only `approved` posts publish. Pushes through the
  * tenant's PublishTarget adapter, then verifies the page is actually live
@@ -32,15 +52,7 @@ export async function publishBlog(job: Job) {
     ? await prisma.publishTarget.findUniqueOrThrow({ where: { id: payload.publishTargetId } })
     : await prisma.publishTarget.findFirstOrThrow({ where: { companyId: post.companyId, isDefault: true } });
 
-  const cfg = target.config as any;
-  let publisher: Publisher;
-  if (target.kind === "custom" && cfg.adapter === "octane") {
-    publisher = octanePublisher({ profileDir: cfg.profileDir ?? "secrets/octane-profile" });
-  } else if (target.kind === "wordpress") {
-    publisher = wordpressPublisher({ ...cfg, appPassword: decryptSecret(String(cfg.appPassword ?? "")) });
-  } else {
-    throw new Error(`no adapter for publish target kind=${target.kind} adapter=${cfg.adapter ?? "?"}`);
-  }
+  const publisher = publisherFor(target);
 
   const seo = (post.seo ?? {}) as any;
 
@@ -98,16 +110,10 @@ export async function publishBlog(job: Job) {
     throw new Error(`publish failed: ${result.detail}`);
   }
 
-  // verify-after-publish (immediate publishes only; scheduled ones verify later)
+  // verify-after-publish (immediate publishes only; scheduled ones are verified by verify-published after go-live)
   let verified = false;
   const isBackfillOrNow = !post.scheduledFor || post.scheduledFor <= new Date();
-  if (isBackfillOrNow && result.liveUrl) {
-    try {
-      const res = await fetchText(result.liveUrl);
-      const stillThere = new URL(res.finalUrl).pathname.length > 1; // homepage redirect = not live
-      verified = res.status === 200 && stillThere && res.text.includes(post.title.slice(0, 40));
-    } catch { verified = false; }
-  }
+  if (isBackfillOrNow && result.liveUrl) verified = await verifyLive(result.liveUrl, post.title);
 
   await prisma.blogPost.update({
     where: { id: post.id },
