@@ -15,7 +15,7 @@ Context for all Claude Code agents working in this repository.
 
 **Tenancy model**: Company → Locations → Verticals. Content is customized by company size, location, vertical, and the company's unique traits.
 
-**Repo URL**: https://github.com/911it/Auto-Blog-Writer
+**Repo URL**: https://github.com/lucius-project/Auto-Blog-Writer
 
 ---
 
