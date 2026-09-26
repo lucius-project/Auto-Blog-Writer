@@ -6,7 +6,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3101";
 type Item = { id: string; type: string; title: string; body: string | null; href: string | null; readAt: string | null; createdAt: string };
 
 const ICON: Record<string, string> = {
-  batch_done: "✅", publish_failed: "⚠️", weekly_done: "🔁", review_needed: "📝", info: "ℹ️",
+  batch_done: "✅", publish_failed: "⚠️", weekly_done: "🔁", review_needed: "📝", credits_exhausted: "⛔", info: "ℹ️",
 };
 
 /** Bell + dropdown; polls every 20s. */
@@ -30,7 +30,8 @@ export default function NotificationsBell() {
   const readAll = async () => { await fetch(`${API}/api/notifications/read-all`, { method: "POST" }); load(); };
   const clickItem = async (n: Item) => {
     if (!n.readAt) await fetch(`${API}/api/notifications/${n.id}/read`, { method: "POST" });
-    if (n.href) location.href = n.href; else load();
+    if (n.href?.startsWith("http")) { window.open(n.href, "_blank", "noopener"); load(); }
+    else if (n.href) location.href = n.href; else load();
   };
 
   return (

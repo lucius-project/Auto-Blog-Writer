@@ -6,7 +6,7 @@ import { prisma } from "./prisma.js";
  */
 export async function notify(opts: {
   companyId?: string | null;
-  type: "batch_done" | "publish_failed" | "weekly_done" | "review_needed" | "info";
+  type: "batch_done" | "publish_failed" | "weekly_done" | "review_needed" | "credits_exhausted" | "info";
   title: string;
   body?: string;
   href?: string;

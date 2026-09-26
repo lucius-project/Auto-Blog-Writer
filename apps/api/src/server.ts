@@ -62,6 +62,8 @@ await app.register(
     await api.register(trendsRoutes);
     const { analyticsRoutes } = await import("./routes/analytics.js");
     await api.register(analyticsRoutes);
+    const { systemRoutes } = await import("./routes/system.js");
+    await api.register(systemRoutes);
   },
   { prefix: "/api" },
 );

@@ -1,7 +1,31 @@
 import { prisma } from "./prisma.js";
+import { notify } from "./notify.js";
 
 const BASE = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 const DEFAULT_MODEL = process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.5";
+
+/**
+ * OpenRouter answers 402 when the account is out of credit. Surface it as a
+ * notification (at most one per 6h) — the web app's credits popup keys off it
+ * alongside the live balance.
+ */
+export async function reportCreditError(status: number, detail: string) {
+  if (status !== 402) return;
+  try {
+    const recent = await prisma.notification.findFirst({
+      where: { type: "credits_exhausted", createdAt: { gte: new Date(Date.now() - 6 * 60 * 60 * 1000) } },
+    });
+    if (recent) return;
+    await notify({
+      type: "credits_exhausted",
+      title: "OpenRouter credits exhausted — AI work is failing",
+      body: `Writing, research and images can't run until credits are added. ${detail.slice(0, 120)}`,
+      href: "https://openrouter.ai/settings/credits",
+    });
+  } catch (e) {
+    console.warn(`[openrouter] credit alert failed: ${(e as Error).message}`);
+  }
+}
 
 export interface ChatOpts {
   model?: string;
@@ -27,7 +51,7 @@ export async function chat(
     headers: {
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://github.com/911it/Auto-Blog-Writer",
+      "HTTP-Referer": "https://github.com/lucius-project/Auto-Blog-Writer",
       "X-Title": "Automated Blog Writer",
     },
     body: JSON.stringify({
@@ -39,7 +63,9 @@ export async function chat(
     }),
   });
   if (!res.ok) {
-    throw new Error(`openrouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
+    const detail = (await res.text()).slice(0, 300);
+    await reportCreditError(res.status, detail);
+    throw new Error(`openrouter ${res.status}: ${detail}`);
   }
   const data = (await res.json()) as {
     choices: { message: { content: string } }[];

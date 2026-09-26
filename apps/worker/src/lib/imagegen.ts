@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { prisma } from "./prisma.js";
-import { chat } from "./openrouter.js";
+import { chat, reportCreditError } from "./openrouter.js";
 
 const BASE = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 const IMAGE_MODEL = process.env.OPENROUTER_IMAGE_MODEL ?? "google/gemini-2.5-flash-image";
@@ -51,7 +51,11 @@ export async function generateCartoon(opts: {
       image_config: { aspect_ratio: "16:9" },
     }),
   });
-  if (!res.ok) throw new Error(`imagegen ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) {
+    const detail = (await res.text()).slice(0, 200);
+    await reportCreditError(res.status, detail);
+    throw new Error(`imagegen ${res.status}: ${detail}`);
+  }
   const data = (await res.json()) as any;
   const url: string = data?.choices?.[0]?.message?.images?.[0]?.image_url?.url ?? "";
   if (!url.startsWith("data:image/")) throw new Error("imagegen: no image in response");

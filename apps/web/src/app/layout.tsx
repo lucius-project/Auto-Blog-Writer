@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import AuthClient from "../lib/auth-client";
 import TopNav from "../components/TopNav";
+import CreditsAlert from "../components/CreditsAlert";
 
 export const metadata: Metadata = {
   title: "Automated Blog Writer",
@@ -17,6 +18,7 @@ export default function RootLayout({
       <body className="min-h-screen bg-gray-50 text-gray-900 antialiased">
         <AuthClient />
         <TopNav />
+        <CreditsAlert />
         {children}
       </body>
     </html>
