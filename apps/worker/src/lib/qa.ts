@@ -1,1 +1,1 @@
-export { runQaGates, type QaResult } from "@abw/shared";
+export { runQaGates, fitMetaDescription, type QaResult } from "@abw/shared";

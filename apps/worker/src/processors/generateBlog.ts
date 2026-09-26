@@ -2,7 +2,7 @@ import type { Job } from "bullmq";
 import { GenerateBlogPayload } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
-import { runQaGates } from "../lib/qa.js";
+import { runQaGates, fitMetaDescription } from "../lib/qa.js";
 import { relevantTestimonials, markTestimonialsUsed } from "../lib/retrieval.js";
 import { countryName } from "../lib/taxonomy.js";
 
@@ -141,6 +141,12 @@ ${testimonials.length ? `- MANDATORY: weave in at least one (max two) of the pro
       { role: "system", content: "You fix specific contract violations in an article without rewriting what already works. Return the full corrected article JSON in the same shape. Reply JSON only." },
       { role: "user", content: `${contract}\n\nFAILED CHECKS TO FIX:\n${failures}\n\nARTICLE JSON:\n${JSON.stringify(article)}` },
     ], { companyId: company.id, tag: "generate-repair", maxTokens: 16000, temperature: 0.2, blogPostId: refreshPost?.id, runRef: costRef });
+    jsonLd = buildJsonLd(article, company, location, profile);
+    qa = runGates(article, jsonLd);
+  }
+  // meta description length is enforced in code, not left to the model
+  if (article.metaDescription !== fitMetaDescription(article.metaDescription)) {
+    article = { ...article, metaDescription: fitMetaDescription(article.metaDescription) };
     jsonLd = buildJsonLd(article, company, location, profile);
     qa = runGates(article, jsonLd);
   }

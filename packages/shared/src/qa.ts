@@ -14,6 +14,31 @@ const FLUFF = [
   "look no further", "in the ever-evolving", "digital landscape",
 ];
 
+export const META_DESCRIPTION_MAX = 155;
+
+const DANGLING = /\s+(?:and|or|but|with|for|to|of|in|on|at|by|the|a|an|plus|including)$/i;
+
+/**
+ * Deterministically fit a meta description to META_DESCRIPTION_MAX: models
+ * miscount characters, so the repair loop can't be trusted with this. Cuts at
+ * the last sentence end, else the last clause (comma), else the last word —
+ * whichever keeps >= 70 chars — and drops dangling connectives ("…, and").
+ */
+export function fitMetaDescription(desc: string, max = META_DESCRIPTION_MAX): string {
+  const d = desc.replace(/\s+/g, " ").trim();
+  if (d.length <= max) return d;
+  const head = d.slice(0, max);
+  const sentenceEnd = Math.max(head.lastIndexOf(". "), head.lastIndexOf("? "), head.lastIndexOf("! "));
+  if (sentenceEnd + 1 >= 70) return head.slice(0, sentenceEnd + 1);
+  const clause = head.lastIndexOf(",");
+  let cut = clause >= 70 ? head.slice(0, clause) : head.slice(0, max - 1).replace(/\s+\S*$/, "");
+  for (let prev = ""; prev !== cut; ) {
+    prev = cut;
+    cut = cut.replace(/[\s,;:\-–—]+$/, "").replace(DANGLING, "");
+  }
+  return `${cut}.`;
+}
+
 export function runQaGates(article: {
   title: string; metaTitle: string; metaDescription: string; slug: string;
   bodyHtml: string; faqs: { q: string; a: string }[]; jsonLd: unknown;
@@ -68,7 +93,7 @@ export function runQaGates(article: {
   g("jsonld_valid", ldOk);
 
   g("meta_title_length", article.metaTitle.length >= 25 && article.metaTitle.length <= 65, true, `${article.metaTitle.length} chars`);
-  g("meta_description_length", article.metaDescription.length >= 70 && article.metaDescription.length <= 165, true, `${article.metaDescription.length} chars`);
+  g("meta_description_length", article.metaDescription.length >= 70 && article.metaDescription.length <= META_DESCRIPTION_MAX, true, `${article.metaDescription.length} chars`);
   g("slug_format", /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(article.slug));
   g("internal_links", article.internalLinks.length >= 2 && article.internalLinks.every((l) => l.startsWith("/")), true, `${article.internalLinks.length} links`);
 
