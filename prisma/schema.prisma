@@ -39,6 +39,7 @@ model Company {
   searchConsoleSnapshots SearchConsoleSnapshot[]
   linkChecks     LinkCheck[]
   competitors    Competitor[]
+  websiteChecklist WebsiteChecklist?
 
   @@index([url])
 }
@@ -526,4 +527,24 @@ model User {
   passwordHash String
   role         String   @default("admin")
   createdAt    DateTime @default(now())
+}
+
+// Website SEO/AEO checklist: automated live checks of the tenant's own site
+// (technical, location pages, industry pages, trust) + manual off-site items.
+model WebsiteChecklist {
+  id            String    @id @default(cuid())
+  companyId     String    @unique
+  // idle | queued | running | failed
+  status        String    @default("idle")
+  error         String?
+  // latest run: ChecklistItem[] (see @abw/shared checklist.ts)
+  items         Json?
+  // owner's manual state, keyed by item key: { [key]: { done: boolean, at: iso } }
+  manual        Json?
+  // when the automated checks last fetched the live site
+  liveFetchedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }

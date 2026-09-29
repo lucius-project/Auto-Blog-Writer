@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { WeeklyRunPayload, DEFAULT_SETTINGS, QUEUES } from "@abw/shared";
+import { WeeklyRunPayload, DEFAULT_SETTINGS, QUEUES, checklistScore, type ChecklistItem } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { notify } from "../lib/notify.js";
 import { getQueue } from "../lib/queues.js";
@@ -9,11 +9,13 @@ import { analyzeGaps } from "./analyzeGaps.js";
 import { analyzeCompetitors } from "./analyzeCompetitors.js";
 import { newsTopicsForCompany } from "../lib/feeds.js";
 import { generateBlog } from "./generateBlog.js";
+import { websiteChecklist } from "./websiteChecklist.js";
 
 /**
  * The forever-loop tick. Runs weekly per tenant (BullMQ job scheduler):
- * re-ingest -> refresh research -> gap analysis (live) -> generate top gaps
- * within caps -> review queue (or auto-approve+stagger when enabled).
+ * re-ingest -> website checklist -> refresh research -> gap analysis (live)
+ * -> generate top gaps within caps -> review queue (or auto-approve+stagger
+ * when enabled).
  */
 export async function weeklyRun(job: Job) {
   const payload = WeeklyRunPayload.parse(job.data);
@@ -26,6 +28,18 @@ export async function weeklyRun(job: Job) {
 
   const asJob = (data: unknown) => ({ data } as Job);
   await ingestSite(asJob({ companyId: company.id, maxPages: 80, force: false }));
+  // no AI calls — re-check the site right after the fresh crawl; never blocks the run
+  let checklistLine = "";
+  try {
+    await websiteChecklist(asJob({ companyId: company.id }));
+    const row = await prisma.websiteChecklist.findUnique({ where: { companyId: company.id } });
+    const manual = (row?.manual ?? {}) as Record<string, { done: boolean }>;
+    const items = ((row?.items ?? []) as unknown as ChecklistItem[])
+      .map((it) => (it.status === "manual" ? { ...it, done: manual[it.key]?.done ?? false } : it));
+    if (items.length) checklistLine = ` Website checklist: ${checklistScore(items)}/100.`;
+  } catch (e: any) {
+    console.warn(`[weekly-run] website checklist: ${e?.message}`);
+  }
   await researchCompany(asJob({ companyId: company.id, force: false }));
   await newsTopicsForCompany(company.id).catch((e) => console.warn(`[weekly-run] feeds: ${e?.message}`));
   try {
@@ -98,7 +112,7 @@ export async function weeklyRun(job: Job) {
     companyId: company.id,
     type: awaiting > 0 ? "review_needed" : "weekly_done",
     title: `Weekly run: ${generated} new article${generated === 1 ? "" : "s"}` + (awaiting ? `, ${awaiting} awaiting review` : ""),
-    body: settings.autoApprove ? `${approved} auto-approved and scheduled.` : "Approve them in the review queue to schedule.",
+    body: (settings.autoApprove ? `${approved} auto-approved and scheduled.` : "Approve them in the review queue to schedule.") + checklistLine,
     href: awaiting ? `/review/${company.id}` : `/company/${company.id}`,
   });
   console.log(`[weekly-run] ${company.name}: generated ${generated}, auto-approved ${approved} (autoApprove=${settings.autoApprove})`);

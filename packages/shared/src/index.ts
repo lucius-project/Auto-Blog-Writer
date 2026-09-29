@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export * from "./qa.js";
+export * from "./checklist.js";
 
 // ---------------------------------------------------------------------------
 // Queue names — single source of truth for API (producers) and worker
@@ -22,6 +23,7 @@ export const QUEUES = {
   syncAnalytics: "sync-analytics",
   analyzeCompetitors: "analyze-competitors",
   verifyPublished: "verify-published",
+  websiteChecklist: "website-checklist",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -139,6 +141,12 @@ export const VerifyPublishedPayload = z.object({
 });
 export type VerifyPublishedPayload = z.infer<typeof VerifyPublishedPayload>;
 
+/** Run the live website SEO/AEO checklist for a tenant's own site. */
+export const WebsiteChecklistPayload = z.object({
+  companyId: z.string().min(1),
+});
+export type WebsiteChecklistPayload = z.infer<typeof WebsiteChecklistPayload>;
+
 export const JOB_PAYLOADS = {
   [QUEUES.ingestSite]: IngestSitePayload,
   [QUEUES.researchCompany]: ResearchCompanyPayload,
@@ -152,6 +160,7 @@ export const JOB_PAYLOADS = {
   [QUEUES.syncAnalytics]: SyncAnalyticsPayload,
   [QUEUES.analyzeCompetitors]: AnalyzeCompetitorsPayload,
   [QUEUES.verifyPublished]: VerifyPublishedPayload,
+  [QUEUES.websiteChecklist]: WebsiteChecklistPayload,
 } as const;
 
 // ---------------------------------------------------------------------------

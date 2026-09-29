@@ -64,6 +64,8 @@ await app.register(
     await api.register(analyticsRoutes);
     const { systemRoutes } = await import("./routes/system.js");
     await api.register(systemRoutes);
+    const { checklistRoutes } = await import("./routes/checklist.js");
+    await api.register(checklistRoutes);
   },
   { prefix: "/api" },
 );
