@@ -69,9 +69,24 @@ export default function CalendarPage({ params }: { params: Promise<{ companyId: 
   const [open, setOpen] = useState<Post | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // a failed load (API restarting, error body) must not leave an empty-looking
+  // calendar or crash the page — keep the last good posts and say so
   const load = useCallback(() =>
-    fetch(`${API}/api/companies/${companyId}/posts`).then((r) => r.json()).then(setPosts), [companyId]);
-  useEffect(() => { load(); }, [load]);
+    fetch(`${API}/api/companies/${companyId}/posts`)
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok || !Array.isArray(data)) throw new Error(data?.error ?? `HTTP ${r.status}`);
+        setPosts(data);
+        setLoadError(null);
+      })
+      .catch((e: Error) => setLoadError(e.message || "network error")), [companyId]);
+  useEffect(() => {
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+  }, [load]);
 
   // month grid
   const first = new Date(month);
@@ -132,6 +147,12 @@ export default function CalendarPage({ params }: { params: Promise<{ companyId: 
           ))}
       </div>
 
+      {loadError && (
+        <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+          Couldn&apos;t load posts ({loadError}){posts.length ? " — showing the last loaded calendar" : ""}.{" "}
+          <button className="ml-1 font-semibold underline" onClick={load}>Retry</button>
+        </div>
+      )}
       {msg && <div className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">{msg} <button className="ml-1 underline" onClick={() => setMsg(null)}>dismiss</button></div>}
 
       <div className="mt-4 overflow-hidden rounded-xl border bg-white">
