@@ -56,7 +56,25 @@ export async function analyzeCompetitors(job: Job) {
       } catch { /* none */ }
 
       const found = await discoverSitemaps(base, robotsSitemaps);
-      const urls = found[0] ? await sitemapUrls(found[0]) : [];
+      let urls: string[] = [];
+      for (const sm of found) {
+        try { urls = await sitemapUrls(sm); } catch { /* try next */ }
+        if (urls.length) break;
+      }
+      // no usable sitemap: fall back to the links on the homepage
+      let homeStatus: number | null = null;
+      if (!urls.length) {
+        try {
+          const home = await fetchText(base);
+          homeStatus = home.status;
+          if (home.status === 200) {
+            urls = [home.finalUrl, ...[...home.text.matchAll(/href="([^"#?]+)"/gi)]
+              .map((m) => { try { return new URL(m[1]!, home.finalUrl).toString(); } catch { return ""; } })
+              .filter((u) => u && !/\.(css|js|png|jpe?g|gif|svg|webp|ico|pdf|xml|woff2?)$/i.test(u))];
+            urls = [...new Set(urls)];
+          }
+        } catch (e: any) { homeStatus = null; }
+      }
       const sameHost = urls.filter((u) => { try { return norm(new URL(u).hostname) === host; } catch { return false; } });
       const picked = sameHost.sort((a, b) => prio(new URL(a).pathname) - prio(new URL(b).pathname))
         .slice(0, payload.maxPagesPerCompetitor);
@@ -97,9 +115,13 @@ export async function analyzeCompetitors(job: Job) {
         data: {
           coverage: coverage as any,
           pagesCrawled: coverage.length,
-          status: "ready",
+          // nothing crawled is a failure, not "ready" — say why
+          status: coverage.length ? "ready" : "failed",
           lastCrawledAt: new Date(),
-          error: coverage.length ? null : "no pages could be crawled (missing sitemap or blocked)",
+          error: coverage.length ? null
+            : homeStatus === 403 || homeStatus === 401 ? `site blocks crawlers (HTTP ${homeStatus}) — search-result benchmark still covers it`
+            : homeStatus && homeStatus >= 500 ? `site is down (HTTP ${homeStatus})`
+            : "no pages could be crawled (no sitemap and no homepage links)",
         },
       });
       console.log(`[analyze-competitors] ${competitor.domain}: ${urls.length} urls, ${extracted.length} crawled, ${coverage.length} classified`);

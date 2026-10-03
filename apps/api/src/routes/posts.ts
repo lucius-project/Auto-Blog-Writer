@@ -160,7 +160,7 @@ export async function postRoutes(app: FastifyInstance) {
       faqs: seo.faqs ?? [],
       jsonLd: seo.jsonLd ?? {},
       internalLinks: seo.internalLinks ?? [],
-    });
+    }, { companyName: (await prisma.company.findUnique({ where: { id: post.companyId }, select: { name: true } }))?.name });
     const updated = await prisma.blogPost.update({
       where: { id },
       data: {

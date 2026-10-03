@@ -70,10 +70,21 @@ ${pricing.map((r) => `- ${r.service}: $${r.low}–$${r.high} ${r.unit}${r.notes 
 ${testimonials.map((t, i) => `[${i + 1}] ${t.clientName ?? "Client"}${t.industry ? ` (${t.industry})` : ""}${t.location ? `, ${t.location}` : ""}: "${t.quote.slice(0, 500)}"${t.resultClaim ? ` — Result: ${t.resultClaim}` : ""}${(t.metrics as string[]).length ? ` — Metrics: ${(t.metrics as string[]).join("; ")}` : ""}`).join("\n")}`
     : "";
 
+  // StoryBrand: the vertical's BrandScript (its own hero, problems, stakes)
+  // leads; the company BrandScript supplies the guide/plan/CTA
+  const brandScript = profile.brandScript ?? null;
+  const vBrandScript = vProfile.brandScript ?? null;
+  const brandScriptBlock = (brandScript || vBrandScript)
+    ? `STORYBRAND BRANDSCRIPT${vBrandScript ? ` — ${vertical!.name.toUpperCase()} (the reader of this article is THIS hero)` : ""}:
+${JSON.stringify(vBrandScript ?? brandScript).slice(0, 3500)}${vBrandScript && brandScript ? `
+COMPANY BRANDSCRIPT (use for the guide's authority, the 3-step plan and the calls to action): ${JSON.stringify({ guide: brandScript.guide, plan: brandScript.plan, callToAction: brandScript.callToAction, oneLiner: brandScript.oneLiner, samenessToAvoid: brandScript.samenessToAvoid }).slice(0, 2000)}` : ""}`
+    : "STORYBRAND BRANDSCRIPT: none researched yet — infer the hero, their problems (external/internal/philosophical), stakes and success from the vertical profile's pain points and buyer questions; keep the company's authority to facts in PROFILE.";
+
   const groundingBlock = `
 COMPANY: ${company.name} (${company.url})
-PROFILE: ${JSON.stringify(profile).slice(0, 2500)}
-${vertical ? `VERTICAL: ${vertical.name}\nVERTICAL PROFILE: ${JSON.stringify(vProfile).slice(0, 2000)}` : ""}
+PROFILE: ${JSON.stringify({ ...profile, brandScript: undefined }).slice(0, 2500)}
+${vertical ? `VERTICAL: ${vertical.name}\nVERTICAL PROFILE: ${JSON.stringify({ ...vProfile, brandScript: undefined }).slice(0, 2000)}` : ""}
+${brandScriptBlock}
 ${location ? `LOCATION: ${location.city}, ${location.state ?? ""}, ${countryName(location.country)} — use ${countryName(location.country)} regulations, terminology and currency, never another country's` : ""}
 ${pricingBlock}
 ${competitorBlock}
@@ -95,18 +106,26 @@ EXISTING SITE PAGES (for internal links — use these exact paths): ${sitePages.
 - Voice: ${profile.brandVoice ?? "plain, confident, no jargon"}. No fluff phrases ("in today's fast-paced world", "it's important to note", "in conclusion"), no hedging filler, varied sentence length.
 - 1300-2000 words. Word count is an output of substance, not a target to pad.
 - If a location is given, localize genuinely (local market/regulatory specifics), never just city-name insertion.
+STORYBRAND (Donald Miller SB7) — the reader is the HERO, ${company.name} is the GUIDE:
+- Write about the reader, their business and their problems — not about what ${company.name} sells or knows. Address the reader as "you/your"; "you" must clearly outnumber "we/our/${company.name}". Mention ${company.name} by name at most 4 times.
+- Earn the right to offer a solution: before ${company.name} is introduced, the reader must recognize their own situation. Name the villain (root cause), the external problem, how it makes them FEEL (internal) and why it's wrong (philosophical), in their industry's own vocabulary and daily reality${vertical ? ` as a ${vertical.name} business` : ""}.
+- The answer block stays a direct, self-contained answer to the question (AI engines quote it) — phrase it to the reader's situation, not as a company pitch.
+- Recommended flow (headings stay question-shaped): answer block -> the reader's problem and why it keeps happening -> what's at stake if nothing changes (failure, concrete and honest, no fear-mongering) -> the substantive how-to/explanatory sections answering the question -> how a guide helps: ONE short section with empathy first, then authority (only real proof: testimonial, facts in PROFILE) -> a simple 3-step plan as an <ol> -> what success looks like for their business plus a clear direct call to action (and the transitional one if given) -> FAQ.
+- Services appear only as the answer to a problem the reader already recognized — never a feature list, never "we offer X, Y, Z".
+- Avoid the sea of sameness: do not use claims every IT company makes (${[...((vBrandScript?.samenessToAvoid ?? []) as string[]), ...((brandScript?.samenessToAvoid ?? []) as string[])].slice(0, 8).join("; ") || "fast response times, trusted partner, full-service, cutting-edge, tailored solutions"}) or phrases like "one-stop shop", "best-in-class", "world-class", "state-of-the-art", "industry-leading", "we pride ourselves". Differentiate through specific understanding of the reader's business.
+- Title and meta description speak to the reader's problem or desired outcome in the words they would search/ask an AI.
 ${testimonials.length ? `- MANDATORY: weave in REAL CLIENT TESTIMONIAL [1] as the real-world example (optionally [2] as brief extra social proof) — either a short quoted excerpt with attribution (first name + industry, e.g. 'Sarah, a Salt Lake City dental practice') inside the most relevant section, or an accurately retold example paragraph. Keep quotes verbatim; never alter their facts or numbers.` : ""}`;
 
   await step("drafting");
   const draft = await chatJson<DraftJson>([
-    { role: "system", content: "You are a senior content writer for AI-search (AEO) + SEO. You write genuinely useful, information-dense articles that AI engines can lift as citations. Reply with JSON only." },
+    { role: "system", content: "You are a senior content writer for AI-search (AEO) + SEO, trained in Donald Miller's StoryBrand framework. You write genuinely useful, information-dense articles that AI engines can lift as citations, told from the reader's side: the reader is the hero, the company is the guide who understands their business. Reply with JSON only." },
     { role: "user", content: `${contract}\n\n${groundingBlock}\n\nReturn JSON: {"title":"the buyer's question, natural phrasing","metaTitle":"<=60 chars","metaDescription":"70-155 chars","slug":"kebab-case","bodyHtml":"...","faqs":[{"q":"...","a":"40-60 words"}],"internalLinks":["/path", ...]}` },
   ], { companyId: company.id, tag: "generate-draft", maxTokens: 16000, temperature: 0.6, blogPostId: refreshPost?.id, runRef: costRef });
 
   // Self-critique pass: tighten against the contract before the code gates run
   await step("self-critique");
   const critiqued = await chatJson<DraftJson>([
-    { role: "system", content: "You are a ruthless editor enforcing an AEO content contract. Fix violations, strip fluff/hedging, verify the answer block is self-contained with a number, ensure FAQ h3s exactly match the faqs array, keep all grounding rules. Return the corrected article as JSON in the same shape. Reply JSON only." },
+    { role: "system", content: "You are a ruthless editor enforcing an AEO + StoryBrand content contract. Fix violations, strip fluff/hedging, verify the answer block is self-contained with a number, ensure FAQ h3s exactly match the faqs array, keep all grounding rules. Rewrite any company-centric passage (we/our, feature lists, generic IT-company claims) so the reader and their business are the subject and the company is only the guide. Return the corrected article as JSON in the same shape. Reply JSON only." },
     { role: "user", content: `${contract}\n\nARTICLE JSON:\n${JSON.stringify(draft)}` },
   ], { companyId: company.id, tag: "generate-critique", maxTokens: 16000, temperature: 0.2, blogPostId: refreshPost?.id, runRef: costRef });
 
@@ -121,7 +140,7 @@ ${testimonials.length ? `- MANDATORY: weave in REAL CLIENT TESTIMONIAL [1] as th
   const testimonialUsed = (bodyHtml: string): boolean =>
     !testimonials.length || usedTestimonialIds(bodyHtml).length > 0;
   const runGates = (art: DraftJson, ld: unknown) => {
-    const qaRes = runQaGates({ ...art, jsonLd: ld });
+    const qaRes = runQaGates({ ...art, jsonLd: ld }, { companyName: company.name });
     const used = testimonialUsed(art.bodyHtml);
     qaRes.gates.push({ name: "real_example_used", ok: used, required: testimonials.length > 0, detail: used ? undefined : "none of the provided client testimonials appear in the article" });
     qaRes.pass = qaRes.gates.every((x) => x.ok || !x.required);

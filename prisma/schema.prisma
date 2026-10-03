@@ -13,9 +13,9 @@ datasource db {
 // ---------------------------------------------------------------------------
 
 model Company {
-  id        String   @id @default(cuid())
-  name      String
-  url       String // primary domain we research & optimize for
+  id         String   @id @default(cuid())
+  name       String
+  url        String // primary domain we research & optimize for
   // AI-researched profile: company size, services, differentiators,
   // what makes them unique, brand voice notes, etc.
   profile    Json?
@@ -23,23 +23,25 @@ model Company {
   siteAudit  Json?
   // per-tenant settings: weekly caps, killSwitch, autoApprove threshold
   settings   Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  locations      Location[]
-  gapAnalyses    GapAnalysis[]
-  blogPosts      BlogPost[]
-  publishTargets PublishTarget[]
-  sitePages      SitePage[]
-  topicNodes     TopicNode[]
-  snapshots      VisibilitySnapshot[]
-  offPageTasks   OffPageTask[]
-  analyticsConnection AnalyticsConnection?
-  analyticsSnapshots  AnalyticsSnapshot[]
+  locations              Location[]
+  gapAnalyses            GapAnalysis[]
+  blogPosts              BlogPost[]
+  publishTargets         PublishTarget[]
+  sitePages              SitePage[]
+  topicNodes             TopicNode[]
+  snapshots              VisibilitySnapshot[]
+  offPageTasks           OffPageTask[]
+  analyticsConnection    AnalyticsConnection?
+  analyticsSnapshots     AnalyticsSnapshot[]
   searchConsoleSnapshots SearchConsoleSnapshot[]
-  linkChecks     LinkCheck[]
-  competitors    Competitor[]
-  websiteChecklist WebsiteChecklist?
+  linkChecks             LinkCheck[]
+  competitors            Competitor[]
+  benchmarkQueries       BenchmarkQuery[]
+  benchmarkRuns          BenchmarkRun[]
+  websiteChecklist       WebsiteChecklist?
 
   @@index([url])
 }
@@ -70,23 +72,26 @@ model Competitor {
 }
 
 model Location {
-  id        String   @id @default(cuid())
-  companyId String
-  name      String // e.g. "Salt Lake City HQ"
-  city      String
-  state     String?
-  country   String   @default("US")
+  id               String   @id @default(cuid())
+  companyId        String
+  name             String // e.g. "Salt Lake City HQ"
+  city             String
+  state            String?
+  country          String   @default("US")
   // location-specific notes that shape local SEO content
-  profile    Json?
-  sitemapUrl String?
-  siteAudit  Json?
+  profile          Json?
+  sitemapUrl       String?
+  siteAudit        Json?
+  // DataForSEO location_code for city-level live SERPs (reference data,
+  // resolved once from their locations list — not cached rankings)
+  serpLocationCode Int?
   // per-tenant settings: weekly caps, killSwitch, autoApprove threshold
-  settings   Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  settings         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  verticals Vertical[]
+  company     Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  verticals   Vertical[]
   gapAnalyses GapAnalysis[]
   blogPosts   BlogPost[]
 
@@ -128,9 +133,9 @@ model GapAnalysis {
   status AnalysisStatus @default(queued)
 
   // Who is ranking (AI-search + SERP), fetched LIVE — never from cache.
-  competitors Json?
+  competitors   Json?
   // Identified gaps: topics/queries where the tenant is absent or weak, and why.
-  gaps        Json?
+  gaps          Json?
   // Timestamp of the live fetch that produced this analysis (proof of freshness).
   liveFetchedAt DateTime?
   error         String?
@@ -138,9 +143,9 @@ model GapAnalysis {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  company  Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  location Location? @relation(fields: [locationId], references: [id])
-  vertical Vertical? @relation(fields: [verticalId], references: [id])
+  company   Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  location  Location?  @relation(fields: [locationId], references: [id])
+  vertical  Vertical?  @relation(fields: [verticalId], references: [id])
   blogPosts BlogPost[]
 
   @@index([companyId])
@@ -162,19 +167,19 @@ model BlogPost {
   verticalId    String?
   gapAnalysisId String?
 
-  title     String
-  slug      String
-  status    PostStatus @default(draft)
-  contentMd String     @default("") // markdown body
-  bodyHtml  String     @default("")
-  qa        Json?
-  topicNodeId String?
+  title        String
+  slug         String
+  status       PostStatus @default(draft)
+  contentMd    String     @default("") // markdown body
+  bodyHtml     String     @default("")
+  qa           Json?
+  topicNodeId  String?
   scheduledFor DateTime?
   batchRunId   String?
   publishError String?
   // SEO/AEO payload: meta title/description, JSON-LD schema.org, FAQ blocks,
   // target queries, internal link suggestions.
-  seo       Json?
+  seo          Json?
   publishedUrl String?
   publishedAt  DateTime?
 
@@ -220,10 +225,10 @@ model PublishTarget {
 // One row per crawled URL. Gap analysis diffs the TopicGraph against
 // questionsAnswered across these rows; the site-map view uses the link graph.
 model SitePage {
-  id        String   @id @default(cuid())
-  companyId String
-  url       String
-  path      String
+  id                String    @id @default(cuid())
+  companyId         String
+  url               String
+  path              String
   // home | service | industry | location | blog | landing | legal | other
   contentType       String?
   title             String?
@@ -240,8 +245,8 @@ model SitePage {
   // hub page a cluster links back to (home/service/industry, or owner-set)
   isPillar          Boolean   @default(false)
   lastCrawledAt     DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -253,16 +258,16 @@ model SitePage {
 // Powers the broken-link report. Re-checked on each crawl (fresh OK links are
 // skipped for a few days to bound requests).
 model LinkCheck {
-  id         String   @id @default(cuid())
-  companyId  String
-  targetUrl  String
-  status     Int?     // HTTP status; null = the request failed outright
-  ok         Boolean  @default(false)
-  kind       String   // internal | external
-  error      String?
+  id        String   @id @default(cuid())
+  companyId String
+  targetUrl String
+  status    Int? // HTTP status; null = the request failed outright
+  ok        Boolean  @default(false)
+  kind      String // internal | external
+  error     String?
   // where it's linked from: [{ sourceUrl, sourcePath, anchor }]
-  sources    Json?
-  checkedAt  DateTime @default(now())
+  sources   Json?
+  checkedAt DateTime @default(now())
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
@@ -291,7 +296,7 @@ model TopicNode {
   category    String // e.g. managed-it, cybersecurity, compliance-hipaa, m365
   funnelStage String // awareness | consideration | decision | compliance
   // taxonomy | paa | fanout | news | gsc
-  source      String  @default("taxonomy")
+  source      String @default("taxonomy")
 
   status     TopicStatus @default(unanswered)
   score      Float?
@@ -328,15 +333,15 @@ model VisibilitySnapshot {
 }
 
 model OffPageTask {
-  id        String @id @default(cuid())
+  id        String   @id @default(cuid())
   companyId String
   // e.g. reddit.com, cloudtango.net, clutch.co
   source    String
   action    String
   evidence  Json?
-  priority  Int    @default(0)
+  priority  Int      @default(0)
   // open | in_progress | done | dismissed
-  status    String @default("open")
+  status    String   @default("open")
   draft     Json?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -349,20 +354,20 @@ model OffPageTask {
 // Per-tenant Google connection: GA4 property + (optional) Search Console site,
 // both authenticated with the same service-account key. One per company.
 model AnalyticsConnection {
-  id            String    @id @default(cuid())
-  companyId     String    @unique
-  provider      String    @default("ga4")
-  propertyId    String
+  id               String    @id @default(cuid())
+  companyId        String    @unique
+  provider         String    @default("ga4")
+  propertyId       String
   // Search Console property, e.g. "sc-domain:example.com" or "https://example.com/"
-  gscSiteUrl    String?
-  gscLastSyncedAt DateTime?
+  gscSiteUrl       String?
+  gscLastSyncedAt  DateTime?
   gscLastSyncError String?
   // { serviceAccountKey: "enc:..." } — encrypted like PublishTarget.config.appPassword
-  config        Json
-  lastSyncedAt  DateTime?
-  lastSyncError String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  config           Json
+  lastSyncedAt     DateTime?
+  lastSyncError    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 }
@@ -370,10 +375,10 @@ model AnalyticsConnection {
 // Rolling Search Console snapshot: query/page performance + position over time.
 // A point is written on every sync so ranking movement is tracked historically.
 model SearchConsoleSnapshot {
-  id         String   @id @default(cuid())
-  companyId  String
-  capturedAt DateTime @default(now())
-  rangeDays  Int
+  id            String   @id @default(cuid())
+  companyId     String
+  capturedAt    DateTime @default(now())
+  rangeDays     Int
   // { totals:{clicks,impressions,ctr,position}, trend:[{date,clicks,impressions,position}],
   //   topQueries:[{query,clicks,impressions,ctr,position}], topPages:[{page,blogPostId,title,...}] }
   summary       Json
@@ -386,10 +391,10 @@ model SearchConsoleSnapshot {
 
 // Rolling-window GA4 report snapshot (trend + per-post leaderboard).
 model AnalyticsSnapshot {
-  id         String   @id @default(cuid())
-  companyId  String
-  capturedAt DateTime @default(now())
-  rangeDays  Int
+  id            String   @id @default(cuid())
+  companyId     String
+  capturedAt    DateTime @default(now())
+  rangeDays     Int
   // { totalUsers, totalSessions, trend: [{date,users,sessions}], topPages: [{path,blogPostId,title,users,sessions}] }
   summary       Json
   liveFetchedAt DateTime
@@ -438,26 +443,26 @@ model CompanyDocument {
 // and retrieved deterministically (no AI) at generation time by industry +
 // keyword overlap.
 model Testimonial {
-  id         String  @id @default(cuid())
-  companyId  String
-  documentId String?
-  clientName String? // as written; may be anonymized
-  industry   String? // normalized lowercase industry/vertical
-  location   String?
-  quote      String
+  id          String    @id @default(cuid())
+  companyId   String
+  documentId  String?
+  clientName  String? // as written; may be anonymized
+  industry    String? // normalized lowercase industry/vertical
+  location    String?
+  quote       String
   // what happened: problem -> outcome, in plain text
   resultClaim String?
   // concrete numbers mentioned (e.g. "response under 5 min", "$12k saved")
-  metrics    Json?
-  services   String[] @default([])
-  keywords   String[] @default([])
+  metrics     Json?
+  services    String[]  @default([])
+  keywords    String[]  @default([])
   // "book" (uploaded testimonial doc) | "google" (pasted Google reviews) | "other"
-  source     String   @default("book")
+  source      String    @default("book")
   // rotation: how often / how recently this quote has been used in a draft, so
   // retrieval can spread social proof across many clients instead of repeating one
-  usedCount  Int      @default(0)
-  lastUsedAt DateTime?
-  createdAt  DateTime @default(now())
+  usedCount   Int       @default(0)
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([companyId, industry])
 }
@@ -465,12 +470,12 @@ model Testimonial {
 // Owner-maintained pricing ranges — the ONLY source the writer may use for
 // company pricing. Always expressed as ranges, never exact invented figures.
 model PricingRange {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
   companyId String
   // e.g. "Managed IT Services", "Co-Managed IT", "Backup & Disaster Recovery"
   service   String
   // e.g. "per user/month", "per device/month", "flat monthly", "one-time"
-  unit      String  @default("per user/month")
+  unit      String   @default("per user/month")
   low       Float
   high      Float
   notes     String?
@@ -483,22 +488,22 @@ model PricingRange {
 // Live progress of an owner-triggered write-and-schedule batch, polled by
 // the dashboard (overall bar + per-article step).
 model BatchRun {
-  id        String   @id @default(cuid())
-  companyId String
+  id           String    @id @default(cuid())
+  companyId    String
   // running | scheduling | done | failed
-  state     String   @default("running")
-  total     Int
-  written   Int      @default(0)
-  scheduled Int      @default(0)
-  skippedQa  Int     @default(0)
-  skippedDup Int     @default(0)
-  failed     Int     @default(0)
+  state        String    @default("running")
+  total        Int
+  written      Int       @default(0)
+  scheduled    Int       @default(0)
+  skippedQa    Int       @default(0)
+  skippedDup   Int       @default(0)
+  failed       Int       @default(0)
   currentTitle String?
   currentStep  String?
   // ids of BlogPosts produced by this run (partial list survives a stop)
-  postIds    Json?
-  startedAt  DateTime @default(now())
-  finishedAt DateTime?
+  postIds      Json?
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
 
   @@index([companyId, startedAt])
 }
@@ -547,4 +552,64 @@ model WebsiteChecklist {
   updatedAt     DateTime  @updatedAt
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+}
+
+// ---- Competitive benchmark: a fixed, BrandScript-derived query set probed
+// LIVE per run so you-vs-competitors is measured like-for-like over time ----
+model BenchmarkQuery {
+  id         String   @id @default(cuid())
+  companyId  String
+  locationId String
+  verticalId String? // null = general local query ("IT support Nanaimo")
+  query      String
+  // local | vertical | problem | comparison | compliance
+  intent     String
+  active     Boolean  @default(true)
+  source     String   @default("auto") // auto | manual
+  createdAt  DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+}
+
+model BenchmarkRun {
+  id            String    @id @default(cuid())
+  companyId     String
+  status        String    @default("running") // running | complete | failed
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+  queriesTotal  Int       @default(0)
+  queriesProbed Int       @default(0)
+  // per-domain scorecard at run end (tenant + listed competitors) for trends
+  summary       Json?
+  error         String?
+
+  company Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  results BenchmarkResult[]
+
+  @@index([companyId, startedAt])
+}
+
+model BenchmarkResult {
+  id            String   @id @default(cuid())
+  runId         String
+  companyId     String
+  queryId       String
+  locationId    String
+  verticalId    String?
+  query         String
+  intent        String
+  liveFetchedAt DateTime
+  // [{ domain, rank, url }] organic top 20, rank = organic position
+  organic       Json
+  // [{ domain, title, rank }] map / local pack
+  localPack     Json
+  aiOverview    Json // cited domains
+  hasAiOverview Boolean
+
+  run BenchmarkRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([companyId])
 }

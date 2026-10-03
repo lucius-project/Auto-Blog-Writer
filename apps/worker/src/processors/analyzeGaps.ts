@@ -2,7 +2,8 @@ import type { Job } from "bullmq";
 import { AnalyzeGapsPayload } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { chatJson } from "../lib/openrouter.js";
-import { serpProbe } from "../lib/dataforseo.js";
+import { serpProbe, serpLocationFor, countrySerpLocation, type SerpWhere } from "../lib/dataforseo.js";
+import { relevantQuestions } from "../lib/relevance.js";
 import { TEMPLATES, frameworksFor, fillTemplate } from "../lib/taxonomy.js";
 import { seedCompetitorTopics } from "../lib/competitorTopics.js";
 
@@ -199,9 +200,16 @@ export async function analyzeGaps(job: Job) {
   };
   let tenantOrganic = 0, tenantAi = 0;
   let probed = 0;
+  // search Google from where the buyer is: the node's city, else the
+  // tenant's country (never the US default for a non-US tenant)
+  const whereByLocation = new Map<string, SerpWhere>();
+  for (const loc of company.locations) whereByLocation.set(loc.id, await serpLocationFor(loc));
+  const fallbackWhere = countrySerpLocation(company.locations[0]?.country);
+  const paaCandidates: { question: string; from: (typeof probeTargets)[number] }[] = [];
   for (const node of probeTargets) {
     try {
-      const probe = await serpProbe(node.question, tenantHost, company.id);
+      const where = (node.locationId && whereByLocation.get(node.locationId)) || fallbackWhere;
+      const probe = await serpProbe(node.question, tenantHost, company.id, where);
       const competitorsCited = probe.aiOverviewDomains.filter((d) => d !== tenantHost.replace(/^www\./, ""));
       const weakness = probe.hasAiOverview ? (probe.tenantInAiOverview ? 0.2 : 0.9) : 0.6;
       const winnability = probe.tenantInOrganicTop10 ? 0.9 : 0.6;
@@ -236,24 +244,35 @@ export async function analyzeGaps(job: Job) {
           directoryDomains.set(d, (directoryDomains.get(d) ?? 0) + 1);
         }
       }
-      // PAA questions become new graph nodes (source: paa)
-      for (const paa of probe.peopleAlsoAsk.slice(0, 5)) {
-        const existingPaa = await prisma.topicNode.findFirst({
-          where: { companyId: company.id, locationId: node.locationId, verticalId: node.verticalId, question: paa },
-          select: { id: true },
-        });
-        if (existingPaa) continue;
-        await prisma.topicNode.create({
-          data: {
-            companyId: company.id, locationId: node.locationId, verticalId: node.verticalId,
-            question: paa, category: node.category, funnelStage: node.funnelStage, source: "paa",
-          },
-        });
-      }
+      for (const paa of probe.peopleAlsoAsk.slice(0, 5)) paaCandidates.push({ question: paa, from: node });
       probed++;
     } catch (e: any) {
       console.warn(`[analyze-gaps] probe failed for "${node.question}": ${e?.message}`);
     }
+  }
+
+  // PAA questions become new graph nodes (source: paa) — only the ones a
+  // buyer would actually ask
+  if (paaCandidates.length) {
+    const profile = (company.profile ?? {}) as any;
+    const keep = await relevantQuestions(company.id,
+      `${company.name}: ${profile.whatTheyDo ?? "IT services"} Serves: ${profile.targetCustomers ?? "businesses"}`,
+      paaCandidates.map((c) => c.question));
+    for (const { question: paa, from: node } of paaCandidates) {
+      if (!keep.has(paa)) continue;
+      const existingPaa = await prisma.topicNode.findFirst({
+        where: { companyId: company.id, locationId: node.locationId, verticalId: node.verticalId, question: paa },
+        select: { id: true },
+      });
+      if (existingPaa) continue;
+      await prisma.topicNode.create({
+        data: {
+          companyId: company.id, locationId: node.locationId, verticalId: node.verticalId,
+          question: paa, category: node.category, funnelStage: node.funnelStage, source: "paa",
+        },
+      });
+    }
+    console.log(`[analyze-gaps] PAA: kept ${keep.size}/${new Set(paaCandidates.map((c) => c.question)).size} relevant questions`);
   }
 
   // heuristic scores for unprobed nodes so the whole backlog is ranked

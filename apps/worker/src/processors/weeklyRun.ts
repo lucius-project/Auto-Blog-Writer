@@ -49,6 +49,15 @@ export async function weeklyRun(job: Job) {
   }
   await analyzeGaps(asJob({ companyId: company.id, liveProbeCount: 12 }));
 
+  // Competitive benchmark: re-measured monthly on the same fixed query set
+  const lastBenchmark = await prisma.benchmarkRun.findFirst({
+    where: { companyId: company.id, status: "complete" }, orderBy: { startedAt: "desc" },
+  });
+  const hasQueries = await prisma.benchmarkQuery.count({ where: { companyId: company.id, active: true } });
+  if (hasQueries && (!lastBenchmark || lastBenchmark.startedAt < new Date(Date.now() - 27 * 24 * 3600e3))) {
+    await getQueue(QUEUES.runBenchmark).add(QUEUES.runBenchmark, { companyId: company.id });
+  }
+
   // Freshness: published answers older than 90 days go stale for refresh
   const staleCutoff = new Date(Date.now() - 90 * 24 * 3600e3);
   await prisma.topicNode.updateMany({

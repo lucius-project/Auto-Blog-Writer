@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export * from "./qa.js";
 export * from "./checklist.js";
+export * from "./benchmark.js";
 
 // ---------------------------------------------------------------------------
 // Queue names — single source of truth for API (producers) and worker
@@ -24,6 +25,8 @@ export const QUEUES = {
   analyzeCompetitors: "analyze-competitors",
   verifyPublished: "verify-published",
   websiteChecklist: "website-checklist",
+  benchmarkQueries: "benchmark-queries",
+  runBenchmark: "run-benchmark",
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -147,6 +150,25 @@ export const WebsiteChecklistPayload = z.object({
 });
 export type WebsiteChecklistPayload = z.infer<typeof WebsiteChecklistPayload>;
 
+/** Generate the competitive benchmark query set from BrandScripts + vertical profiles. */
+export const BenchmarkQueriesPayload = z.object({
+  companyId: z.string().min(1),
+  perPair: z.number().int().min(3).max(40).default(12),
+  perLocation: z.number().int().min(0).max(20).default(8),
+  // replace existing auto queries (manual ones are always kept)
+  replace: z.boolean().default(false),
+  runAfter: z.boolean().default(false),
+});
+export type BenchmarkQueriesPayload = z.infer<typeof BenchmarkQueriesPayload>;
+
+/** Probe every active benchmark query LIVE and store per-domain results. */
+export const RunBenchmarkPayload = z.object({
+  companyId: z.string().min(1),
+  // fill in the searches an earlier run failed to probe, then re-score it
+  resumeRunId: z.string().min(1).optional(),
+});
+export type RunBenchmarkPayload = z.infer<typeof RunBenchmarkPayload>;
+
 export const JOB_PAYLOADS = {
   [QUEUES.ingestSite]: IngestSitePayload,
   [QUEUES.researchCompany]: ResearchCompanyPayload,
@@ -161,6 +183,8 @@ export const JOB_PAYLOADS = {
   [QUEUES.analyzeCompetitors]: AnalyzeCompetitorsPayload,
   [QUEUES.verifyPublished]: VerifyPublishedPayload,
   [QUEUES.websiteChecklist]: WebsiteChecklistPayload,
+  [QUEUES.benchmarkQueries]: BenchmarkQueriesPayload,
+  [QUEUES.runBenchmark]: RunBenchmarkPayload,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -200,3 +224,24 @@ export const DEFAULT_SETTINGS = {
   autoApprove: false,
 } as const;
 export type TenantSettings = typeof DEFAULT_SETTINGS;
+
+// ---- StoryBrand BrandScript (Company.profile.brandScript / Vertical.profile.brandScript) ----
+const bsText = z.string().max(2000).nullable().optional();
+const bsList = z.array(z.string().max(1000)).max(20).optional();
+export const BrandScriptInput = z.object({
+  character: z.object({ who: bsText, wants: bsText }).optional(),
+  problem: z.object({ villain: bsText, external: bsText, internal: bsText, philosophical: bsText }).optional(),
+  guide: z.object({ empathy: bsList, authority: bsList }).optional(),
+  plan: z.object({ process: bsList, agreement: bsList }).optional(),
+  callToAction: z.object({ direct: bsText, transitional: bsText }).optional(),
+  failure: bsList,
+  success: bsList,
+  transformation: z.object({ from: bsText, to: bsText }).optional(),
+  oneLiner: bsText,
+  samenessToAvoid: bsList,
+  // vertical-only
+  dayInTheLife: bsText,
+  storyHooks: bsList,
+  vocabulary: bsList,
+});
+export type BrandScriptInput = z.infer<typeof BrandScriptInput>;

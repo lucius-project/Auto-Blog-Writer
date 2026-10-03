@@ -2,6 +2,7 @@
 import { use, useCallback, useEffect, useState } from "react";
 import { WriteSchedulePanel } from "../../../../components/WriteSchedulePanel";
 import { BatchProgress } from "../../../../components/BatchProgress";
+import { BrandScriptEditor } from "../../../../components/BrandScriptEditor";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3101";
 
@@ -116,6 +117,7 @@ export default function Settings({ params }: { params: Promise<{ companyId: stri
         <TestimonialsList companyId={companyId} />
       </div>
 
+      <BrandScriptEditor company={company} reload={load} onNotice={setMsg} />
       <Competitors companyId={companyId} onNotice={setMsg} />
       <LocationsManager company={company} reload={load} onNotice={setMsg} />
       <PublishTargets company={company} reload={load} onNotice={setMsg} companyId={companyId} />

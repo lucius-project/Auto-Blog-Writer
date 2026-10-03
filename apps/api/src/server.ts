@@ -51,6 +51,10 @@ await app.register(
     await api.register(batchStatusRoutes);
     const { writeScheduleRoutes } = await import("./routes/posts.js");
     await api.register(writeScheduleRoutes);
+    const { benchmarkRoutes } = await import("./routes/benchmark.js");
+    await api.register(benchmarkRoutes);
+    const { brandScriptRoutes } = await import("./routes/brandscript.js");
+    await api.register(brandScriptRoutes);
     const { pricingRoutes } = await import("./routes/pricing.js");
     await api.register(pricingRoutes);
     const { documentRoutes } = await import("./routes/documents.js");

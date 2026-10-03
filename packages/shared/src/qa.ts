@@ -14,6 +14,17 @@ const FLUFF = [
   "look no further", "in the ever-evolving", "digital landscape",
 ];
 
+/**
+ * StoryBrand "sea of sameness": claims every IT/MSP site makes. They describe
+ * the vendor, not the reader, so they can't differentiate anyone.
+ */
+const SAMENESS = [
+  "one-stop shop", "full-service", "cutting-edge", "state-of-the-art", "best-in-class",
+  "world-class", "industry-leading", "leading provider", "second to none", "top-notch",
+  "we pride ourselves", "trusted partner", "tailored solutions", "comprehensive solutions",
+  "end-to-end solutions", "robust solutions", "innovative solutions", "we are passionate",
+];
+
 export const META_DESCRIPTION_MAX = 155;
 
 const DANGLING = /\s+(?:and|or|but|with|for|to|of|in|on|at|by|the|a|an|plus|including)$/i;
@@ -43,7 +54,7 @@ export function runQaGates(article: {
   title: string; metaTitle: string; metaDescription: string; slug: string;
   bodyHtml: string; faqs: { q: string; a: string }[]; jsonLd: unknown;
   internalLinks: string[];
-}): QaResult {
+}, opts: { companyName?: string } = {}): QaResult {
   const gates: QaResult["gates"] = [];
   const g = (name: string, ok: boolean, required = true, detail?: string) =>
     gates.push({ name, ok, required, detail });
@@ -99,6 +110,22 @@ export function runQaGates(article: {
 
   const fluffHits = FLUFF.filter((f) => text.toLowerCase().includes(f));
   g("no_fluff_phrases", fluffHits.length === 0, true, fluffHits.join("; "));
+
+  const samenessHits = SAMENESS.filter((f) => text.toLowerCase().includes(f));
+  g("no_sameness_phrases", samenessHits.length === 0, true, samenessHits.join("; "));
+
+  // StoryBrand: the reader is the hero — "you" must clearly outweigh the
+  // company talking about itself (lowercase "us" only, so "US" isn't counted)
+  const youCount = (text.match(/\b[Yy]ou(?:r|rs|rself|rselves)?\b/g) ?? []).length;
+  const nameCount = opts.companyName
+    ? text.toLowerCase().split(opts.companyName.toLowerCase()).length - 1
+    : 0;
+  const weCount = (text.match(/\b(?:[Ww]e|[Oo]urs?|us)\b/g) ?? []).length + nameCount;
+  g("reader_focus", youCount >= 15 && youCount >= weCount * 2, true, `you/your ${youCount} vs we/our/company ${weCount} (need >=15 and >=2x)`);
+
+  // StoryBrand plan: a simple numbered path to working together
+  const olItems = (html.match(/<ol[\s>][\s\S]*?<\/ol>/i)?.[0].match(/<li[\s>]/gi) ?? []).length;
+  g("storybrand_plan_flag", olItems >= 3, false, olItems ? `${olItems}-step plan` : "no numbered plan");
 
   // flags (non-blocking): unresolved owner placeholders must be reviewed
   const placeholders = [...html.matchAll(/\[OWNER:[^\]]*\]/g)].length;

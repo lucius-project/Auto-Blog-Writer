@@ -15,6 +15,8 @@ import { syncAnalytics } from "./processors/syncAnalytics.js";
 import { analyzeCompetitors } from "./processors/analyzeCompetitors.js";
 import { verifyPublished } from "./processors/verifyPublished.js";
 import { websiteChecklist } from "./processors/websiteChecklist.js";
+import { benchmarkQueries } from "./processors/benchmarkQueries.js";
+import { runBenchmark } from "./processors/runBenchmark.js";
 import { Queue } from "bullmq";
 
 const connection = new IORedis(
@@ -37,6 +39,8 @@ const workers = [
   new Worker(QUEUES.analyzeCompetitors, analyzeCompetitors, { connection, lockDuration: 15 * 60 * 1000 }),
   new Worker(QUEUES.verifyPublished, verifyPublished, { connection, lockDuration: 10 * 60 * 1000 }),
   new Worker(QUEUES.websiteChecklist, websiteChecklist, { connection, lockDuration: 10 * 60 * 1000 }),
+  new Worker(QUEUES.benchmarkQueries, benchmarkQueries, { connection, lockDuration: 20 * 60 * 1000 }),
+  new Worker(QUEUES.runBenchmark, runBenchmark, { connection, lockDuration: 60 * 60 * 1000 }),
 ];
 
 for (const w of workers) {

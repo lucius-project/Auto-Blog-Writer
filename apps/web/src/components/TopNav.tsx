@@ -69,6 +69,7 @@ export default function TopNav() {
     },
     {
       key: "growth", label: "Growth", items: [
+        { href: `/company/${companyId}/competitors`, label: "Competitors" },
         { href: `/company/${companyId}/analytics`, label: "Analytics" },
         { href: `/company/${companyId}/trends`, label: "Trends" },
       ],
