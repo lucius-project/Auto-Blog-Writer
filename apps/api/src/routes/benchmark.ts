@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import {
-  QUEUES, scoreDomain, queryHit, untrackedDomains, normDomain, toBenchmarkRow, type BenchmarkRow,
+  QUEUES, scoreDomain, queryHit, untrackedDomains, normDomain, toBenchmarkRow, isBenchmarkRunLive, type BenchmarkRow,
 } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { getQueue } from "../lib/queues.js";
@@ -20,10 +20,13 @@ export async function benchmarkRoutes(app: FastifyInstance) {
     if (!company) return reply.code(404).send({ error: "not found" });
     const tenant = normDomain(new URL(company.url).hostname);
 
-    const runs = await prisma.benchmarkRun.findMany({
+    const runs = (await prisma.benchmarkRun.findMany({
       where: { companyId }, orderBy: { startedAt: "asc" },
-      select: { id: true, status: true, startedAt: true, finishedAt: true, queriesTotal: true, queriesProbed: true, summary: true, error: true },
-    });
+      select: { id: true, status: true, startedAt: true, finishedAt: true, updatedAt: true, queriesTotal: true, queriesProbed: true, summary: true, error: true },
+    })).map((r) => r.status === "running" && !isBenchmarkRunLive(r)
+      // heartbeat went silent: report it as dead so the UI unblocks (the next run closes it out in the DB)
+      ? { ...r, status: "failed", error: `interrupted after ${r.queriesProbed}/${r.queriesTotal} searches (worker stopped mid-run)` }
+      : r);
     const queryCount = await prisma.benchmarkQuery.count({ where: { companyId, active: true } });
     const latest = [...runs].reverse().find((r) => r.status === "complete");
     const running = runs.find((r) => r.status === "running") ?? null;

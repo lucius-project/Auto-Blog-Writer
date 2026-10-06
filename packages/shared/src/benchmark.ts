@@ -8,6 +8,14 @@
  * + 0.25 x cited in the Google AI Overview
  */
 
+/**
+ * A "running" BenchmarkRun whose heartbeat (updatedAt, bumped on every probe)
+ * is older than this was interrupted (worker restart/crash), not in progress.
+ */
+export const BENCHMARK_STALE_MS = 10 * 60 * 1000;
+export const isBenchmarkRunLive = (r: { status: string; updatedAt: Date }) =>
+  r.status === "running" && Date.now() - r.updatedAt.getTime() < BENCHMARK_STALE_MS;
+
 export interface BenchmarkRow {
   queryId: string;
   query: string;

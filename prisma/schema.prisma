@@ -581,6 +581,8 @@ model BenchmarkRun {
   finishedAt    DateTime?
   queriesTotal  Int       @default(0)
   queriesProbed Int       @default(0)
+  // heartbeat: bumped on every probe; a "running" run silent for 10 min is dead
+  updatedAt     DateTime  @default(now()) @updatedAt
   // per-domain scorecard at run end (tenant + listed competitors) for trends
   summary       Json?
   error         String?

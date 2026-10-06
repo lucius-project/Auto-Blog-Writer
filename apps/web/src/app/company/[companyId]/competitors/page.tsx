@@ -95,6 +95,9 @@ export default function Competitors({ params }: { params: Promise<{ companyId: s
               <> <span className="text-amber-700">{latest.queriesTotal - latest.queriesProbed} searches failed at the data provider.</span>{" "}
                 <button className="text-blue-600 underline" onClick={() => post("/benchmark/run", { resumeRunId: latest.runId }, "Retrying the failed searches — this page updates itself.")}>Retry them</button></>
             )}
+            {d.runs?.[0]?.status === "failed" && !d.running && (
+              <> <span className="text-red-600">Last run ({fmtDate(d.runs[0].startedAt)}) failed: {d.runs[0].error} — showing the previous complete run.</span></>
+            )}
           </p>
 
           {/* ---- scorecard ---- */}

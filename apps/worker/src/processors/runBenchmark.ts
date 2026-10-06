@@ -1,5 +1,5 @@
 import type { Job } from "bullmq";
-import { RunBenchmarkPayload, scoreDomain, normDomain, toBenchmarkRow } from "@abw/shared";
+import { RunBenchmarkPayload, scoreDomain, normDomain, toBenchmarkRow, isBenchmarkRunLive } from "@abw/shared";
 import { prisma } from "../lib/prisma.js";
 import { serpProbe, serpLocationFor, type SerpWhere } from "../lib/dataforseo.js";
 import { notify } from "../lib/notify.js";
@@ -18,10 +18,16 @@ export async function runBenchmark(job: Job) {
     where: { id: payload.companyId },
     include: { locations: true, competitors: { select: { domain: true } } },
   });
-  const running = await prisma.benchmarkRun.findFirst({
-    where: { companyId: company.id, status: "running", startedAt: { gt: new Date(Date.now() - 3 * 3600e3) } },
-  });
-  if (running) return { status: "already_running", runId: running.id };
+  const running = await prisma.benchmarkRun.findMany({ where: { companyId: company.id, status: "running" } });
+  const live = running.find(isBenchmarkRunLive);
+  if (live) return { status: "already_running", runId: live.id };
+  // no heartbeat for BENCHMARK_STALE_MS: the worker died mid-run — close it out
+  for (const r of running) {
+    await prisma.benchmarkRun.update({
+      where: { id: r.id },
+      data: { status: "failed", finishedAt: r.updatedAt, error: `interrupted after ${r.queriesProbed}/${r.queriesTotal} searches (worker stopped mid-run)` },
+    });
+  }
 
   // resume: probe only the searches an earlier run is missing (failed probes)
   const resume = payload.resumeRunId
@@ -74,10 +80,9 @@ export async function runBenchmark(job: Job) {
           if (deferFailures) retryLater.push(q);
           else { failed++; console.warn(`[run-benchmark] "${q.query}" failed: ${e?.message}`); }
         }
-        if ((probed + failed) % 10 === 0) {
-          await prisma.benchmarkRun.update({ where: { id: run.id }, data: { queriesProbed: probed } });
-          await job.updateProgress({ probed, failed, total: run.queriesTotal }).catch(() => {});
-        }
+        // every probe, success or not: live progress + the run's heartbeat
+        await prisma.benchmarkRun.update({ where: { id: run.id }, data: { queriesProbed: probed } });
+        await job.updateProgress({ probed, failed, deferred: retryLater.length, total: run.queriesTotal }).catch(() => {});
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, () => worker(queries, true)));
