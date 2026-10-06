@@ -230,9 +230,13 @@ function CompetitorVisibility({ companyId }: { companyId: string }) {
   );
 }
 
-/** Line chart for average SERP position — y-axis inverted so "up" = better rank. */
-function PositionTrend({ points, label }: { points: { x: number; y: number }[]; label: string }) {
-  const W = 640, H = 180, PAD = 38;
+/**
+ * Line chart for average SERP position — y-axis inverted so "up" = better rank.
+ * Hover a dot for its exact position and measurement time.
+ */
+function PositionTrend({ points, label, daily }: { points: { x: number; y: number }[]; label: string; daily: boolean }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const W = 640, H = 196, PAD = 38, BOTTOM = 54;
   const pts = points.filter((p) => p.y != null && p.y > 0);
   if (pts.length < 2) return <div className="flex h-[180px] items-center justify-center text-sm text-gray-400">Not enough history yet — a point is added each sync.</div>;
   const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
@@ -241,20 +245,47 @@ function PositionTrend({ points, label }: { points: { x: number; y: number }[]; 
   const yMax = Math.ceil(Math.max(...ys) + 1);
   const sx = (x: number) => PAD + ((x - x0) / (x1 - x0 || 1)) * (W - PAD * 2);
   // invert: better (lower) position near the top
-  const sy = (y: number) => PAD + ((y - yMin) / (yMax - yMin || 1)) * (H - PAD * 2);
+  const sy = (y: number) => PAD / 2 + ((y - yMin) / (yMax - yMin || 1)) * (H - PAD / 2 - BOTTOM);
   const path = pts.map((p, i) => `${i ? "L" : "M"}${sx(p.x).toFixed(1)},${sy(p.y).toFixed(1)}`).join(" ");
   const gridYs = [yMin, (yMin + yMax) / 2, yMax];
+  // daily points are UTC calendar dates; per-sync points are real timestamps
+  const fmt = (x: number, withTime: boolean) => new Date(x).toLocaleString(undefined, daily
+    ? { month: "short", day: "numeric", timeZone: "UTC" }
+    : { month: "short", day: "numeric", ...(withTime ? { hour: "numeric", minute: "2-digit" } : {}) });
+  const axisIdx = [...new Set([0, Math.floor((pts.length - 1) / 2), pts.length - 1])];
+  const h = hover != null ? pts[hover] : null;
+  const tipW = 150, tipH = 36;
+  const tipX = h ? Math.min(Math.max(sx(h.x) - tipW / 2, 2), W - tipW - 2) : 0;
+  const tipY = h ? (sy(h.y) - tipH - 10 < 2 ? sy(h.y) + 10 : sy(h.y) - tipH - 10) : 0;
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" onMouseLeave={() => setHover(null)}>
       {gridYs.map((gy, i) => (
         <g key={i}>
           <line x1={PAD} x2={W - PAD} y1={sy(gy)} y2={sy(gy)} stroke="#e5e7eb" strokeWidth={1} />
           <text x={PAD - 6} y={sy(gy) + 4} textAnchor="end" fontSize={10} fill="#9ca3af">#{Math.round(gy)}</text>
         </g>
       ))}
+      {axisIdx.map((i) => (
+        <text key={i} x={sx(pts[i]!.x)} y={H - BOTTOM + 16} fontSize={10} fill="#9ca3af"
+          textAnchor={i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle"}>{fmt(pts[i]!.x, false)}</text>
+      ))}
       <path d={path} fill="none" stroke="#16a34a" strokeWidth={2.5} strokeLinejoin="round" />
-      {pts.map((p, i) => <circle key={i} cx={sx(p.x)} cy={sy(p.y)} r={3} fill="#16a34a" />)}
-      <text x={W / 2} y={H - 4} textAnchor="middle" fontSize={10} fill="#9ca3af">{label} · higher = better rank</text>
+      {h && <line x1={sx(h.x)} x2={sx(h.x)} y1={PAD / 2} y2={H - BOTTOM} stroke="#d1d5db" strokeDasharray="3 3" />}
+      {pts.map((p, i) => (
+        <g key={i} onMouseEnter={() => setHover(i)} style={{ cursor: "pointer" }}>
+          <circle cx={sx(p.x)} cy={sy(p.y)} r={hover === i ? 5 : 3} fill="#16a34a" stroke="#fff" strokeWidth={hover === i ? 2 : 0} />
+          {/* larger invisible hit area so small dots are easy to hover */}
+          <circle cx={sx(p.x)} cy={sy(p.y)} r={10} fill="transparent" />
+        </g>
+      ))}
+      {h && (
+        <g pointerEvents="none">
+          <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={6} fill="#111827" opacity={0.92} />
+          <text x={tipX + tipW / 2} y={tipY + 15} textAnchor="middle" fontSize={12} fontWeight={600} fill="#fff">Avg position #{h.y.toFixed(1)}</text>
+          <text x={tipX + tipW / 2} y={tipY + 29} textAnchor="middle" fontSize={10} fill="#d1d5db">{fmt(h.x, true)}</text>
+        </g>
+      )}
+      <text x={W / 2} y={H - 6} textAnchor="middle" fontSize={10} fill="#9ca3af">{label} · higher = better rank · hover a dot for details</text>
     </svg>
   );
 }
@@ -455,7 +486,7 @@ function SearchPerformance({ companyId, data }: { companyId: string; data: Searc
 
       <div className="mt-4">
         <div className="text-xs font-semibold uppercase tracking-wide text-gray-400">Average position over time</div>
-        <div className="mt-2"><PositionTrend points={posPts} label={histPts.filter((p) => p.y > 0).length >= 2 ? "per sync" : "daily (90d)"} /></div>
+        <div className="mt-2"><PositionTrend points={posPts} daily={posPts === dailyPts} label={posPts === dailyPts ? "daily (90d)" : "per sync"} /></div>
       </div>
 
       {((data.improved?.length ?? 0) > 0 || (data.declined?.length ?? 0) > 0) && (
